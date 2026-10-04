@@ -37,6 +37,7 @@ export interface EquipmentInstanceSaveData {
     rarity: EquipmentRarity;
     rolledStats: RolledStatSaveData[];
     unlockedStatLineCount: number;
+    lockedStatIndices: number[];
 }
 
 export interface InventorySaveData {

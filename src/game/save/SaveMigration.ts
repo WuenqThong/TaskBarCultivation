@@ -20,6 +20,10 @@ export function migrateSaveData(rawData: unknown): SaveMigrationResult {
         };
     }
 
+    if (version === 1) {
+        return migrateVersionOne(rawData);
+    }
+
     if (version !== CURRENT_SAVE_VERSION) {
         return {
             success: false,
@@ -32,6 +36,50 @@ export function migrateSaveData(rawData: unknown): SaveMigrationResult {
         success: true,
         version: CURRENT_SAVE_VERSION,
         data: rawData as unknown as GameSaveData,
+    };
+}
+
+function migrateVersionOne(
+    rawData: Record<string, unknown>,
+): SaveMigrationResult {
+    const inventory = isRecord(rawData.inventory)
+        ? rawData.inventory
+        : null;
+    const instances = inventory && Array.isArray(inventory.equipmentInstances)
+        ? inventory.equipmentInstances
+        : null;
+
+    if (!inventory || !instances) {
+        return {
+            success: false,
+            reason: "Invalid version 1 equipment data",
+            version: 1,
+        };
+    }
+
+    const migratedInstances = instances.map((instance) => {
+        if (!isRecord(instance)) {
+            return instance;
+        }
+
+        return {
+            ...instance,
+            lockedStatIndices: [],
+        };
+    });
+    const migrated = {
+        ...rawData,
+        version: CURRENT_SAVE_VERSION,
+        inventory: {
+            ...inventory,
+            equipmentInstances: migratedInstances,
+        },
+    };
+
+    return {
+        success: true,
+        version: CURRENT_SAVE_VERSION,
+        data: migrated as unknown as GameSaveData,
     };
 }
 

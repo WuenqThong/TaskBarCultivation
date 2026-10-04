@@ -36,6 +36,9 @@ import { EnemyFactory } from "../enemies/EnemyFactory";
 import type { EquipmentDefinition } from "../equipment/Equipment";
 import { EquipmentFactory } from "../equipment/EquipmentFactory";
 import { EquipmentManager } from "../equipment/EquipmentManager";
+import { EquipmentSalvageManager } from "../equipment/EquipmentSalvageManager";
+import { EquipmentStatUnlockManager } from "../equipment/EquipmentStatUnlockManager";
+import { EquipmentRerollManager } from "../equipment/EquipmentRerollManager";
 import { EquipmentRarity } from "../equipment/EquipmentRarity";
 import { EquipmentStatRoller } from "../equipment/EquipmentStatRoller";
 import { EQUIPMENT_DATA } from "../equipment/equipmentData";
@@ -75,6 +78,9 @@ export class MainScene {
     private alchemyManager: AlchemyManager | null;
     private inventory: Inventory;
     private equipmentManager: EquipmentManager | null;
+    private equipmentSalvageManager: EquipmentSalvageManager | null;
+    private equipmentStatUnlockManager: EquipmentStatUnlockManager | null;
+    private equipmentRerollManager: EquipmentRerollManager | null;
     private equipmentStatRoller: EquipmentStatRoller;
     private equipmentFactory: EquipmentFactory;
     private refiningManager: RefiningManager | null;
@@ -118,6 +124,9 @@ export class MainScene {
         this.alchemyManager = null;
         this.inventory = new Inventory();
         this.equipmentManager = null;
+        this.equipmentSalvageManager = null;
+        this.equipmentStatUnlockManager = null;
+        this.equipmentRerollManager = null;
         this.equipmentStatRoller = new EquipmentStatRoller();
         this.equipmentFactory = new EquipmentFactory(this.equipmentStatRoller);
         this.refiningManager = null;
@@ -157,6 +166,9 @@ export class MainScene {
         this.createCraftingManager();
         this.createBuffAndAlchemySystems();
         this.createEquipmentManager();
+        this.createEquipmentSalvageManager();
+        this.createEquipmentStatUnlockManager();
+        this.createEquipmentRerollManager();
         this.createRefiningManager();
         this.createArtifactSystems();
         this.createTechniqueManager();
@@ -182,6 +194,9 @@ export class MainScene {
             !this.player ||
             !this.cultivationSystem ||
             !this.equipmentManager ||
+            !this.equipmentSalvageManager ||
+            !this.equipmentStatUnlockManager ||
+            !this.equipmentRerollManager ||
             !this.artifactManager ||
             !this.techniqueManager ||
             !this.skillManager ||
@@ -202,6 +217,9 @@ export class MainScene {
             this.cultivationSystem,
             this.inventory,
             this.equipmentManager,
+            this.equipmentSalvageManager,
+            this.equipmentStatUnlockManager,
+            this.equipmentRerollManager,
             this.artifactManager,
             this.techniqueManager,
             this.skillManager,
@@ -230,6 +248,51 @@ export class MainScene {
             () => this.cultivationSystem?.getRealm() ??
                 CultivationRealm.QI_REFINING,
         );
+    }
+
+    private createEquipmentSalvageManager(): void {
+        if (!this.equipmentManager) {
+            return;
+        }
+
+        this.equipmentSalvageManager = new EquipmentSalvageManager(
+            this.inventory,
+            this.equipmentManager,
+        );
+    }
+
+    private createEquipmentStatUnlockManager(): void {
+        if (!this.equipmentManager) {
+            return;
+        }
+
+        this.equipmentStatUnlockManager = new EquipmentStatUnlockManager({
+            inventory: this.inventory,
+            equipmentManager: this.equipmentManager,
+            statRoller: this.equipmentStatRoller,
+            getSpiritStone: () => this.spiritStone,
+            spendSpiritStone: (amount) => this.spendSpiritStone(amount),
+            refundSpiritStone: (amount) => {
+                this.setSpiritStone(this.spiritStone + amount);
+            },
+        });
+    }
+
+    private createEquipmentRerollManager(): void {
+        if (!this.equipmentManager) {
+            return;
+        }
+
+        this.equipmentRerollManager = new EquipmentRerollManager({
+            inventory: this.inventory,
+            equipmentManager: this.equipmentManager,
+            statRoller: this.equipmentStatRoller,
+            getSpiritStone: () => this.spiritStone,
+            spendSpiritStone: (amount) => this.spendSpiritStone(amount),
+            refundSpiritStone: (amount) => {
+                this.setSpiritStone(this.spiritStone + amount);
+            },
+        });
     }
 
     private createRefiningManager(): void {

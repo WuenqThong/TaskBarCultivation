@@ -54,6 +54,26 @@ export class Inventory {
         this.version += 1;
     }
 
+    public canAddItem(
+        item: ItemDefinition,
+        quantity = 1,
+    ): boolean {
+        const amount = Math.floor(quantity);
+
+        if (
+            amount <= 0 ||
+            item.maxStack <= 0 ||
+            item.type === ItemType.EQUIPMENT
+        ) {
+            return false;
+        }
+
+        const currentQuantity = this.items.get(item.id)?.quantity ?? 0;
+        const maximumQuantity = item.stackable ? item.maxStack : 1;
+
+        return currentQuantity + amount <= maximumQuantity;
+    }
+
     public removeItem(
         itemId: string,
         quantity = 1,
@@ -246,6 +266,21 @@ export class Inventory {
         return removed;
     }
 
+    public replaceEquipmentInstance(
+        equipment: EquipmentInstance,
+    ): boolean {
+        if (!this.equipmentInstances.has(equipment.instanceId)) {
+            return false;
+        }
+
+        this.equipmentInstances.set(
+            equipment.instanceId,
+            this.cloneEquipmentInstance(equipment),
+        );
+        this.version += 1;
+        return true;
+    }
+
     public getEquipmentInstance(
         instanceId: string,
     ): EquipmentInstance | null {
@@ -306,6 +341,7 @@ export class Inventory {
             rolledStats: equipment.rolledStats.map(
                 (modifier) => ({ ...modifier }),
             ),
+            lockedStatIndices: [...equipment.lockedStatIndices],
         };
     }
 }

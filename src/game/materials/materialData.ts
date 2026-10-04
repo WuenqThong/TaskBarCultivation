@@ -3,6 +3,19 @@ import type { MaterialDefinition } from "./Material";
 import { MaterialCategory } from "./MaterialCategory";
 
 export const MATERIAL_DATA = {
+    EQUIPMENT_ESSENCE: {
+        id: "equipment_essence",
+        name: "Luyện Khí Tinh Hoa",
+        description:
+            "Tinh hoa thu được khi tháo rã trang bị. " +
+            "Dùng để cải tiến và mở thêm thuộc tính trang bị.",
+        type: ItemType.MATERIAL,
+        rarity: ItemRarity.UNCOMMON,
+        stackable: true,
+        maxStack: 999999,
+        materialCategory: MaterialCategory.ESSENCE,
+        tier: 1,
+    },
     MYSTIC_IRON: {
         id: "mystic_iron",
         name: "Huyền Thiết",

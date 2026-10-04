@@ -2,6 +2,7 @@ import { StatModifierType } from "../stats/StatModifier";
 import type { StatModifier } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
 import type { EquipmentDefinition } from "./Equipment";
+import type { EquipmentInstance } from "./EquipmentInstance";
 import type { EquipmentRarity } from "./EquipmentRarity";
 import {
     BASE_STAT_ROLL_RANGES,
@@ -36,12 +37,49 @@ export class EquipmentStatRoller {
         );
 
         return selectedStats.map((stat, index) => ({
+            ...this.rollStatOfType(definition, rarity, stat),
             id: `roll:${definition.id}:${stat}:${index}`,
+        }));
+    }
+
+    public rollStatOfType(
+        definition: EquipmentDefinition,
+        rarity: EquipmentRarity,
+        stat: StatType,
+    ): StatModifier {
+        if (!SLOT_STAT_POOLS[definition.slot].includes(stat)) {
+            throw new Error(`Invalid stat ${stat} for slot ${definition.slot}`);
+        }
+
+        return {
+            id: `roll:${definition.id}:${stat}`,
             stat,
             type: StatModifierType.FLAT,
             value: this.rollValue(definition, rarity, stat),
             source: `equipment_roll:${definition.id}`,
-        }));
+        };
+    }
+
+    public rollAdditionalStat(
+        equipment: EquipmentInstance,
+    ): StatModifier | null {
+        const excludedStats = new Set(
+            equipment.rolledStats.map((modifier) => modifier.stat),
+        );
+
+        return this.rollStatFromAvailablePool(
+            equipment.definition,
+            equipment.rarity,
+            excludedStats,
+        );
+    }
+
+    public rollStatFromAvailablePool(
+        definition: EquipmentDefinition,
+        rarity: EquipmentRarity,
+        excludedStats: ReadonlySet<StatType>,
+    ): StatModifier | null {
+        return this.rollStats(definition, rarity, 1, excludedStats)[0] ?? null;
     }
 
     private selectUniqueStats(

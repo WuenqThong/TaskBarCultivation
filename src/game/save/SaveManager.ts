@@ -154,6 +154,7 @@ export class SaveManager {
                         definitionId: equipment.definition.id,
                         rarity: equipment.rarity,
                         unlockedStatLineCount: equipment.unlockedStatLineCount,
+                        lockedStatIndices: [...equipment.lockedStatIndices],
                         rolledStats: equipment.rolledStats.map((modifier) => ({
                             stat: modifier.stat,
                             type: modifier.type,
@@ -537,7 +538,8 @@ export class SaveManager {
             saved.instanceId.length === 0 ||
             !this.isEquipmentRarity(saved.rarity) ||
             !Number.isFinite(saved.unlockedStatLineCount) ||
-            !Array.isArray(saved.rolledStats)
+            !Array.isArray(saved.rolledStats) ||
+            !Array.isArray(saved.lockedStatIndices)
         ) {
             console.warn(`Invalid equipment instance: ${saved.definitionId}`);
             return null;
@@ -561,6 +563,11 @@ export class SaveManager {
                 source: `equipment:${saved.instanceId}`,
             }];
         });
+        const lockedStatIndices = Array.from(new Set(
+            saved.lockedStatIndices.filter((index) =>
+                Number.isInteger(index) && index >= 0 && index < rolledStats.length,
+            ),
+        )).sort((left, right) => left - right);
 
         return {
             instanceId: saved.instanceId,
@@ -571,6 +578,7 @@ export class SaveManager {
                 0,
                 Math.floor(saved.unlockedStatLineCount),
             ),
+            lockedStatIndices,
         };
     }
 

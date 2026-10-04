@@ -9,6 +9,7 @@ export interface StatRollRange {
 }
 
 export const INITIAL_STAT_LINE_COUNT = 2;
+export const CURRENT_MAX_STAT_LINE_COUNT = 3;
 
 export const RARITY_STAT_MULTIPLIER: Readonly<
     Record<EquipmentRarity, number>

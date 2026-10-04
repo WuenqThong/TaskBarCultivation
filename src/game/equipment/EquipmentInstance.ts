@@ -10,6 +10,7 @@ export interface EquipmentInstance {
     rarity: EquipmentRarity;
     rolledStats: StatModifier[];
     unlockedStatLineCount: number;
+    lockedStatIndices: number[];
 }
 
 let fallbackInstanceSequence = 0;
@@ -34,6 +35,7 @@ export function createEquipmentInstance(
         rarity,
         rolledStats,
         unlockedStatLineCount: INITIAL_STAT_LINE_COUNT,
+        lockedStatIndices: [],
     };
 }
 

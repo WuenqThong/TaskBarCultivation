@@ -31,6 +31,13 @@ import { CULTIVATION_LAYERS_PER_STAGE } from "../cultivation/cultivationConfig";
 import { Player } from "../entities/Player";
 import type { EquipmentInstance } from "../equipment/EquipmentInstance";
 import { EquipmentManager } from "../equipment/EquipmentManager";
+import type { EquipmentSalvageManager } from "../equipment/EquipmentSalvageManager";
+import { EquipmentSalvageFailReason } from "../equipment/EquipmentSalvageManager";
+import type { EquipmentStatUnlockManager } from "../equipment/EquipmentStatUnlockManager";
+import { EquipmentStatUnlockFailReason } from "../equipment/EquipmentStatUnlockManager";
+import type { EquipmentRerollManager } from "../equipment/EquipmentRerollManager";
+import { EquipmentRerollFailReason } from "../equipment/EquipmentRerollManager";
+import { CURRENT_MAX_STAT_LINE_COUNT } from "../equipment/equipmentConfig";
 import {
     EQUIPMENT_RARITY_COLORS,
     EQUIPMENT_RARITY_LABELS,
@@ -158,6 +165,9 @@ export class BottomMenu {
     private cultivationSystem: CultivationSystem;
     private inventory: Inventory;
     private equipmentManager: EquipmentManager;
+    private equipmentSalvageManager: EquipmentSalvageManager;
+    private equipmentStatUnlockManager: EquipmentStatUnlockManager;
+    private equipmentRerollManager: EquipmentRerollManager;
     private artifactManager: ArtifactManager;
     private techniqueManager: TechniqueManager;
     private skillManager: SkillManager;
@@ -180,9 +190,15 @@ export class BottomMenu {
     private refreshTimer: number;
     private renderedInventoryVersion: number;
     private renderedEquipmentVersion: number;
+    private renderedEquipmentInventoryVersion: number;
     private renderedArtifactVersion: number;
     private renderedTechniqueVersion: number;
     private equipmentStatusMessage: string;
+    private inventoryStatusMessage: string;
+    private pendingSalvageInstanceId: string | null;
+    private pendingStatUnlockInstanceId: string | null;
+    private selectedRerollInstanceId: string | null;
+    private pendingRerollInstanceId: string | null;
     private artifactStatusMessage: string;
     private techniqueStatusMessage: string;
     private selectedRefiningCatalysts: Map<string, string | undefined>;
@@ -205,6 +221,9 @@ export class BottomMenu {
         cultivationSystem: CultivationSystem,
         inventory: Inventory,
         equipmentManager: EquipmentManager,
+        equipmentSalvageManager: EquipmentSalvageManager,
+        equipmentStatUnlockManager: EquipmentStatUnlockManager,
+        equipmentRerollManager: EquipmentRerollManager,
         artifactManager: ArtifactManager,
         techniqueManager: TechniqueManager,
         skillManager: SkillManager,
@@ -223,6 +242,9 @@ export class BottomMenu {
         this.cultivationSystem = cultivationSystem;
         this.inventory = inventory;
         this.equipmentManager = equipmentManager;
+        this.equipmentSalvageManager = equipmentSalvageManager;
+        this.equipmentStatUnlockManager = equipmentStatUnlockManager;
+        this.equipmentRerollManager = equipmentRerollManager;
         this.artifactManager = artifactManager;
         this.techniqueManager = techniqueManager;
         this.skillManager = skillManager;
@@ -252,9 +274,15 @@ export class BottomMenu {
         this.refreshTimer = 0;
         this.renderedInventoryVersion = -1;
         this.renderedEquipmentVersion = -1;
+        this.renderedEquipmentInventoryVersion = -1;
         this.renderedArtifactVersion = -1;
         this.renderedTechniqueVersion = -1;
         this.equipmentStatusMessage = "";
+        this.inventoryStatusMessage = "";
+        this.pendingSalvageInstanceId = null;
+        this.pendingStatUnlockInstanceId = null;
+        this.selectedRerollInstanceId = null;
+        this.pendingRerollInstanceId = null;
         this.artifactStatusMessage = "";
         this.techniqueStatusMessage = "";
         this.selectedRefiningCatalysts = new Map();
@@ -1209,9 +1237,20 @@ export class BottomMenu {
             this.renderEquipmentSlot(slot, index * 210);
         });
 
-        this.renderOwnedEquipment();
-        this.renderDebugRealmButtons();
+        const selectedEquipment = this.selectedRerollInstanceId
+            ? this.inventory.getEquipmentInstance(this.selectedRerollInstanceId)
+            : null;
+
+        if (selectedEquipment) {
+            this.renderRerollDetail(selectedEquipment);
+        } else {
+            this.selectedRerollInstanceId = null;
+            this.pendingRerollInstanceId = null;
+            this.renderOwnedEquipment();
+            this.renderDebugRealmButtons();
+        }
         this.renderedEquipmentVersion = this.equipmentManager.getVersion();
+        this.renderedEquipmentInventoryVersion = this.inventory.getVersion();
     }
 
     private renderEquipmentSlot(
@@ -1240,7 +1279,9 @@ export class BottomMenu {
         const definition = equipment.definition;
         const nameText = this.createContentText(definition.name, 55, 14);
         const requirementText = this.createContentText(
-            `${EQUIPMENT_RARITY_LABELS[equipment.rarity]} | Yêu cầu: ${CULTIVATION_REALM_LABELS[definition.requiredRealm]}`,
+            `${EQUIPMENT_RARITY_LABELS[equipment.rarity]} | ` +
+            `Dòng: ${equipment.rolledStats.length} / ${CURRENT_MAX_STAT_LINE_COUNT} | ` +
+            `Yêu cầu: ${CULTIVATION_REALM_LABELS[definition.requiredRealm]}`,
             75,
             11,
         );
@@ -1278,6 +1319,18 @@ export class BottomMenu {
             modifierText,
             unequipButton,
         );
+        this.renderStatUnlockAction(equipment, x + 90, 142);
+        const rerollButton = this.createMenuActionButton(
+            "TẨY",
+            44,
+            24,
+            () => this.openRerollDetail(equipment.instanceId),
+            "#c4b5fd",
+            9,
+        );
+
+        rerollButton.position.set(x + 170, 142);
+        this.tabContainer.addChild(rerollButton);
     }
 
     private renderOwnedEquipment(): void {
@@ -1304,8 +1357,9 @@ export class BottomMenu {
                 .map((modifier) => this.formatStatModifier(modifier))
                 .join(", ");
             const button = this.createMenuActionButton(
-                `${equipment.definition.name} #${shortId}${equippedLabel}\n${stats}`,
-                185,
+                `${equipment.definition.name} #${shortId}${equippedLabel} ` +
+                `[${equipment.rolledStats.length}/${CURRENT_MAX_STAT_LINE_COUNT}]\n${stats}`,
+                110,
                 32,
                 () => {
                     this.attemptEquip(equipment);
@@ -1316,10 +1370,233 @@ export class BottomMenu {
 
             button.position.set(
                 650 + column * 195,
-                28 + row * 36,
+                28 + row * 64,
             );
             this.tabContainer.addChild(button);
+            this.renderStatUnlockAction(
+                equipment,
+                765 + column * 195,
+                28 + row * 64,
+            );
+            const rerollButton = this.createMenuActionButton(
+                "TẨY",
+                78,
+                22,
+                () => this.openRerollDetail(equipment.instanceId),
+                "#c4b5fd",
+                9,
+            );
+
+            rerollButton.position.set(
+                765 + column * 195,
+                54 + row * 64,
+            );
+            this.tabContainer.addChild(rerollButton);
         });
+    }
+
+    private openRerollDetail(instanceId: string): void {
+        this.selectedRerollInstanceId = instanceId;
+        this.pendingRerollInstanceId = null;
+        this.equipmentStatusMessage = "Chọn các dòng cần giữ, sau đó Tẩy Luyện.";
+        this.renderEquipmentTab();
+    }
+
+    private renderRerollDetail(equipment: EquipmentInstance): void {
+        const title = this.createContentText(
+            `TẨY LUYỆN - ${equipment.definition.name}`,
+            2,
+            15,
+        );
+        const preview = this.equipmentRerollManager.getRerollPreview(
+            equipment.instanceId,
+        );
+        const closeButton = this.createMenuActionButton(
+            "QUAY LẠI",
+            76,
+            22,
+            () => {
+                this.selectedRerollInstanceId = null;
+                this.pendingRerollInstanceId = null;
+                this.renderEquipmentTab();
+            },
+            "#ffffff",
+            9,
+        );
+
+        title.x = 650;
+        closeButton.position.set(1195, 0);
+        this.tabContainer.addChild(title, closeButton);
+
+        equipment.rolledStats.forEach((modifier, index) => {
+            const locked = equipment.lockedStatIndices.includes(index);
+            const statText = this.createContentText(
+                this.formatStatModifier(modifier),
+                34 + index * 30,
+                12,
+            );
+            const lockButton = this.createMenuActionButton(
+                locked ? "ĐÃ KHÓA" : "KHÓA",
+                72,
+                24,
+                () => this.toggleRerollLock(equipment.instanceId, index),
+                locked ? "#fbbf24" : "#ffffff",
+                9,
+            );
+
+            statText.x = 650;
+            lockButton.position.set(825, 30 + index * 30);
+            this.tabContainer.addChild(statText, lockButton);
+        });
+
+        const costText = this.createContentText(
+            preview
+                ? `Chi phí (${preview.lockedCount} khóa):\n` +
+                    `Luyện Khí Tinh Hoa: ${preview.ownedEssence}/${preview.cost.essence}\n` +
+                    `Linh Thạch: ${preview.ownedSpiritStone}/${preview.cost.spiritStone}`
+                : "Không thể Tẩy Luyện khi đã khóa tất cả dòng.",
+            34,
+            12,
+        );
+
+        costText.x = 920;
+        costText.style.fill = preview ? "#e5e7eb" : "#fca5a5";
+        this.tabContainer.addChild(costText);
+
+        if (this.pendingRerollInstanceId === equipment.instanceId) {
+            const warning = this.createContentText(
+                "Các thuộc tính không khóa sẽ bị thay đổi.",
+                128,
+                11,
+            );
+            const confirmButton = this.createMenuActionButton(
+                "XÁC NHẬN",
+                82,
+                26,
+                () => this.confirmEquipmentReroll(equipment.instanceId),
+                "#fbbf24",
+                10,
+            );
+            const cancelButton = this.createMenuActionButton(
+                "HỦY",
+                52,
+                26,
+                () => {
+                    this.pendingRerollInstanceId = null;
+                    this.renderEquipmentTab();
+                },
+                "#ffffff",
+                10,
+            );
+
+            warning.x = 650;
+            confirmButton.position.set(900, 124);
+            cancelButton.position.set(988, 124);
+            this.tabContainer.addChild(warning, confirmButton, cancelButton);
+            return;
+        }
+
+        const rerollButton = this.createMenuActionButton(
+            "TẨY LUYỆN",
+            110,
+            28,
+            () => this.beginEquipmentReroll(equipment.instanceId),
+            "#c4b5fd",
+            11,
+        );
+
+        rerollButton.position.set(920, 124);
+        this.tabContainer.addChild(rerollButton);
+    }
+
+    private toggleRerollLock(instanceId: string, statIndex: number): void {
+        const result = this.equipmentRerollManager.toggleStatLock(
+            instanceId,
+            statIndex,
+        );
+
+        this.pendingRerollInstanceId = null;
+        this.equipmentStatusMessage = result.success
+            ? result.locked ? "Đã khóa dòng thuộc tính." : "Đã mở khóa dòng thuộc tính."
+            : this.getRerollFailureMessage(
+                result.reason ?? EquipmentRerollFailReason.INVALID_STAT_CONFIGURATION,
+            );
+
+        if (result.success) {
+            this.saveManager.requestSave();
+        }
+
+        this.renderEquipmentTab();
+    }
+
+    private beginEquipmentReroll(instanceId: string): void {
+        const check = this.equipmentRerollManager.canReroll(instanceId);
+        const preview = this.equipmentRerollManager.getRerollPreview(instanceId);
+
+        if (!check.success) {
+            this.pendingRerollInstanceId = null;
+            this.equipmentStatusMessage = this.getRerollFailureMessage(
+                check.reason ?? EquipmentRerollFailReason.INVALID_STAT_CONFIGURATION,
+            );
+            this.renderEquipmentTab();
+            return;
+        }
+
+        this.pendingStatUnlockInstanceId = null;
+        this.pendingRerollInstanceId = instanceId;
+        this.equipmentStatusMessage = preview
+            ? `Xác nhận chi ${preview.cost.essence} Tinh Hoa và ` +
+                `${preview.cost.spiritStone} Linh Thạch. Chưa roll stat.`
+            : "Không thể tạo preview Tẩy Luyện.";
+        this.renderEquipmentTab();
+    }
+
+    private confirmEquipmentReroll(instanceId: string): void {
+        const result = this.equipmentRerollManager.reroll(instanceId);
+
+        this.pendingRerollInstanceId = null;
+
+        if (!result.success || !result.previousStats || !result.newStats ||
+            !result.rerolledIndices) {
+            this.equipmentStatusMessage = this.getRerollFailureMessage(
+                result.reason ?? EquipmentRerollFailReason.INVALID_STAT_CONFIGURATION,
+            );
+            this.renderEquipmentTab();
+            return;
+        }
+
+        const before = result.rerolledIndices.map((index) =>
+            this.formatStatModifier(result.previousStats![index]),
+        ).join(", ");
+        const after = result.rerolledIndices.map((index) =>
+            this.formatStatModifier(result.newStats![index]),
+        ).join(", ");
+
+        this.equipmentStatusMessage =
+            `TẨY LUYỆN THÀNH CÔNG | Trước: ${before} | Sau: ${after}`;
+        this.saveManager.requestSave();
+        this.renderEquipmentTab();
+    }
+
+    private getRerollFailureMessage(
+        reason: EquipmentRerollFailReason,
+    ): string {
+        if (reason === EquipmentRerollFailReason.ITEM_NOT_FOUND) {
+            return "Không tìm thấy trang bị.";
+        }
+        if (reason === EquipmentRerollFailReason.NO_STATS) {
+            return "Trang bị không có thuộc tính để Tẩy Luyện.";
+        }
+        if (reason === EquipmentRerollFailReason.ALL_STATS_LOCKED) {
+            return "Không thể Tẩy Luyện: tất cả dòng đã khóa.";
+        }
+        if (reason === EquipmentRerollFailReason.NOT_ENOUGH_ESSENCE) {
+            return "Không đủ Luyện Khí Tinh Hoa.";
+        }
+        if (reason === EquipmentRerollFailReason.NOT_ENOUGH_SPIRIT_STONE) {
+            return "Không đủ Linh Thạch.";
+        }
+        return "Cấu hình thuộc tính trang bị không hợp lệ.";
     }
 
     private renderDebugRealmButtons(): void {
@@ -1371,6 +1648,153 @@ export class BottomMenu {
         }
 
         this.renderEquipmentTab();
+    }
+
+    private renderStatUnlockAction(
+        equipment: EquipmentInstance,
+        x: number,
+        y: number,
+    ): void {
+        if (
+            equipment.unlockedStatLineCount >= CURRENT_MAX_STAT_LINE_COUNT ||
+            equipment.rolledStats.length >= CURRENT_MAX_STAT_LINE_COUNT
+        ) {
+            const maxText = this.createContentText("ĐÃ TỐI ĐA", y + 5, 9);
+
+            maxText.x = x;
+            maxText.style.fill = "#86efac";
+            this.tabContainer.addChild(maxText);
+            return;
+        }
+
+        if (this.pendingStatUnlockInstanceId === equipment.instanceId) {
+            const confirmButton = this.createMenuActionButton(
+                "XÁC NHẬN",
+                54,
+                24,
+                () => this.confirmStatLineUnlock(equipment.instanceId),
+                "#fbbf24",
+                8,
+            );
+            const cancelButton = this.createMenuActionButton(
+                "HỦY",
+                30,
+                24,
+                () => {
+                    this.pendingStatUnlockInstanceId = null;
+                    this.setStatUnlockStatus("Đã hủy mở dòng thuộc tính");
+                    this.renderActiveTab();
+                },
+                "#ffffff",
+                8,
+            );
+
+            confirmButton.position.set(x, y);
+            cancelButton.position.set(x + 57, y);
+            this.tabContainer.addChild(confirmButton, cancelButton);
+            return;
+        }
+
+        const unlockButton = this.createMenuActionButton(
+            "MỞ DÒNG",
+            78,
+            24,
+            () => this.beginStatLineUnlock(equipment.instanceId),
+            "#67e8f9",
+            9,
+        );
+
+        unlockButton.position.set(x, y);
+        this.tabContainer.addChild(unlockButton);
+    }
+
+    private beginStatLineUnlock(instanceId: string): void {
+        const preview = this.equipmentStatUnlockManager.getUnlockPreview(
+            instanceId,
+        );
+        const check = this.equipmentStatUnlockManager.canUnlockNextStatLine(
+            instanceId,
+        );
+
+        if (!preview || !check.success) {
+            this.pendingStatUnlockInstanceId = null;
+            const failureMessage = this.getStatUnlockFailureMessage(
+                    check.reason ?? EquipmentStatUnlockFailReason.INVALID_EQUIPMENT,
+                );
+            this.setStatUnlockStatus(preview
+                ? `${failureMessage} ` +
+                    `Tinh Hoa ${preview.ownedEssence}/${preview.cost.essence}, ` +
+                    `Linh Thạch ${preview.ownedSpiritStone}/${preview.cost.spiritStone}.`
+                : failureMessage);
+            this.renderActiveTab();
+            return;
+        }
+
+        this.pendingSalvageInstanceId = null;
+        this.pendingStatUnlockInstanceId = instanceId;
+        this.setStatUnlockStatus(
+            `Mở dòng ${preview.targetLine} cho ${preview.equipmentName}? ` +
+            `Luyện Khí Tinh Hoa ${preview.ownedEssence}/${preview.cost.essence}, ` +
+            `Linh Thạch ${preview.ownedSpiritStone}/${preview.cost.spiritStone}. ` +
+            "Stat mới chưa được roll.",
+        );
+        this.renderActiveTab();
+    }
+
+    private confirmStatLineUnlock(instanceId: string): void {
+        const result = this.equipmentStatUnlockManager.unlockNextStatLine(
+            instanceId,
+        );
+
+        this.pendingStatUnlockInstanceId = null;
+
+        if (!result.success || !result.equipment || !result.newModifier) {
+            this.setStatUnlockStatus(
+                this.getStatUnlockFailureMessage(
+                    result.reason ?? EquipmentStatUnlockFailReason.INVALID_EQUIPMENT,
+                ),
+            );
+            this.renderActiveTab();
+            return;
+        }
+
+        this.setStatUnlockStatus(
+            `MỞ DÒNG THÀNH CÔNG: ${result.equipment.definition.name} - ` +
+            `${this.formatStatModifier(result.newModifier)}`,
+        );
+        this.saveManager.requestSave();
+        this.renderActiveTab();
+    }
+
+    private setStatUnlockStatus(message: string): void {
+        this.equipmentStatusMessage = message;
+        this.inventoryStatusMessage = message;
+    }
+
+    private getStatUnlockFailureMessage(
+        reason: EquipmentStatUnlockFailReason,
+    ): string {
+        if (reason === EquipmentStatUnlockFailReason.ITEM_NOT_FOUND) {
+            return "Không tìm thấy trang bị.";
+        }
+
+        if (reason === EquipmentStatUnlockFailReason.MAX_LINES_REACHED) {
+            return "Đã mở tối đa số dòng hiện tại.";
+        }
+
+        if (reason === EquipmentStatUnlockFailReason.NOT_ENOUGH_ESSENCE) {
+            return "Không đủ Luyện Khí Tinh Hoa.";
+        }
+
+        if (reason === EquipmentStatUnlockFailReason.NOT_ENOUGH_SPIRIT_STONE) {
+            return "Không đủ Linh Thạch.";
+        }
+
+        if (reason === EquipmentStatUnlockFailReason.INVALID_STAT_POOL) {
+            return "Không còn thuộc tính hợp lệ để mở.";
+        }
+
+        return "Dữ liệu trang bị không hợp lệ.";
     }
 
     private formatStatModifier(modifier: StatModifier): string {
@@ -1675,8 +2099,15 @@ export class BottomMenu {
         const pillStacks = this.inventory.getPillStacks();
         const equipmentInstances = this.inventory.getEquipmentInstances();
         let displayIndex = 0;
+        const statusText = this.createContentText(
+            this.inventoryStatusMessage,
+            5,
+            12,
+        );
 
-        this.tabContainer.addChild(title);
+        statusText.x = 165;
+        statusText.style.fill = "#fbbf24";
+        this.tabContainer.addChild(title, statusText);
 
         if (
             inventoryItems.length === 0 &&
@@ -1784,7 +2215,9 @@ export class BottomMenu {
                     13,
                 );
                 const detailsText = this.createContentText(
-                    `${EQUIPMENT_RARITY_LABELS[equipment.rarity]} | ${CULTIVATION_REALM_LABELS[definition.requiredRealm]}${equippedLabel}`,
+                    `${EQUIPMENT_RARITY_LABELS[equipment.rarity]} | ` +
+                    `Dòng ${equipment.rolledStats.length}/${CURRENT_MAX_STAT_LINE_COUNT} | ` +
+                    `${CULTIVATION_REALM_LABELS[definition.requiredRealm]}${equippedLabel}`,
                     y + 15,
                     10,
                 );
@@ -1807,6 +2240,8 @@ export class BottomMenu {
                     detailsText,
                     statsText,
                 );
+
+                this.renderInventoryEquipmentActions(equipment, x, y);
                 displayIndex += 1;
             });
         }
@@ -1829,6 +2264,172 @@ export class BottomMenu {
         this.tabContainer.addChild(addButton, removeButton);
 
         this.renderedInventoryVersion = this.inventory.getVersion();
+    }
+
+    private renderInventoryEquipmentActions(
+        equipment: EquipmentInstance,
+        x: number,
+        y: number,
+    ): void {
+        const equipped = this.equipmentManager.isEquipped(equipment.instanceId);
+
+        if (this.pendingStatUnlockInstanceId === equipment.instanceId) {
+            this.renderStatUnlockAction(equipment, x, y + 42);
+            return;
+        }
+
+        if (equipped) {
+            const unequipButton = this.createMenuActionButton(
+                "THÁO",
+                62,
+                20,
+                () => {
+                    if (this.equipmentManager.unequip(equipment.definition.slot)) {
+                        this.inventoryStatusMessage =
+                            `Đã tháo ${equipment.definition.name}. ` +
+                            "Có thể tháo rã trang bị này.";
+                        this.renderInventoryTab();
+                    }
+                },
+                "#ffffff",
+                9,
+            );
+            const protectedText = this.createContentText(
+                "Không thể tháo rã khi đang dùng",
+                y + 46,
+                9,
+            );
+
+            unequipButton.position.set(x, y + 42);
+            this.renderStatUnlockAction(equipment, x + 70, y + 42);
+            protectedText.x = x + 154;
+            protectedText.style.fill = "#fca5a5";
+            this.tabContainer.addChild(unequipButton, protectedText);
+            return;
+        }
+
+        if (this.pendingSalvageInstanceId === equipment.instanceId) {
+            const confirmButton = this.createMenuActionButton(
+                "XÁC NHẬN",
+                82,
+                20,
+                () => this.confirmEquipmentSalvage(equipment.instanceId),
+                "#fbbf24",
+                9,
+            );
+            const cancelButton = this.createMenuActionButton(
+                "HỦY",
+                55,
+                20,
+                () => {
+                    this.pendingSalvageInstanceId = null;
+                    this.inventoryStatusMessage = "Đã hủy tháo rã";
+                    this.renderInventoryTab();
+                },
+                "#ffffff",
+                9,
+            );
+
+            confirmButton.position.set(x, y + 42);
+            cancelButton.position.set(x + 90, y + 42);
+            this.tabContainer.addChild(confirmButton, cancelButton);
+            return;
+        }
+
+        const equipButton = this.createMenuActionButton(
+            "TRANG BỊ",
+            65,
+            20,
+            () => {
+                if (this.equipmentManager.equip(equipment)) {
+                    this.inventoryStatusMessage =
+                        `Đã trang bị ${equipment.definition.name}`;
+                } else {
+                    this.inventoryStatusMessage =
+                        `Yêu cầu cảnh giới: ` +
+                        CULTIVATION_REALM_LABELS[equipment.definition.requiredRealm];
+                }
+
+                this.renderInventoryTab();
+            },
+            "#ffffff",
+            9,
+        );
+        const salvageButton = this.createMenuActionButton(
+            "THÁO RÃ",
+            65,
+            20,
+            () => this.beginEquipmentSalvage(equipment.instanceId),
+            "#fbbf24",
+            9,
+        );
+
+        equipButton.position.set(x, y + 42);
+        salvageButton.position.set(x + 70, y + 42);
+        this.tabContainer.addChild(equipButton, salvageButton);
+        this.renderStatUnlockAction(equipment, x + 140, y + 42);
+    }
+
+    private beginEquipmentSalvage(instanceId: string): void {
+        const check = this.equipmentSalvageManager.canSalvage(instanceId);
+        const preview = this.equipmentSalvageManager.getSalvagePreview(instanceId);
+
+        if (!check.success || !preview) {
+            this.inventoryStatusMessage = this.getSalvageFailureMessage(
+                check.reason ?? EquipmentSalvageFailReason.INVALID_EQUIPMENT,
+            );
+            this.pendingSalvageInstanceId = null;
+            this.renderInventoryTab();
+            return;
+        }
+
+        this.pendingSalvageInstanceId = instanceId;
+        this.pendingStatUnlockInstanceId = null;
+        this.inventoryStatusMessage =
+            `Tháo rã ${preview.equipmentName} ` +
+            `[${EQUIPMENT_RARITY_LABELS[preview.rarity]}]? ` +
+            `Nhận ${preview.essenceName} x${preview.essenceQuantity}`;
+        this.renderInventoryTab();
+    }
+
+    private confirmEquipmentSalvage(instanceId: string): void {
+        const result = this.equipmentSalvageManager.salvage(instanceId);
+
+        this.pendingSalvageInstanceId = null;
+
+        if (!result.success || !result.preview) {
+            this.inventoryStatusMessage = this.getSalvageFailureMessage(
+                result.reason ?? EquipmentSalvageFailReason.INVALID_EQUIPMENT,
+            );
+            this.renderInventoryTab();
+            return;
+        }
+
+        this.inventoryStatusMessage =
+            `Đã tháo rã ${result.preview.equipmentName} ` +
+            `[${EQUIPMENT_RARITY_LABELS[result.preview.rarity]}]. ` +
+            `Nhận ${result.preview.essenceName} ` +
+            `x${result.preview.essenceQuantity}`;
+        this.saveManager.requestSave();
+        this.renderInventoryTab();
+    }
+
+    private getSalvageFailureMessage(
+        reason: EquipmentSalvageFailReason,
+    ): string {
+        if (reason === EquipmentSalvageFailReason.ITEM_NOT_FOUND) {
+            return "Không tìm thấy trang bị cần tháo rã.";
+        }
+
+        if (reason === EquipmentSalvageFailReason.ITEM_CURRENTLY_EQUIPPED) {
+            return "Không thể tháo rã trang bị đang sử dụng.";
+        }
+
+        if (reason === EquipmentSalvageFailReason.REWARD_CAPACITY_EXCEEDED) {
+            return "Không đủ chỗ chứa Luyện Khí Tinh Hoa.";
+        }
+
+        return "Trang bị không hợp lệ, không thể tháo rã.";
     }
 
     private getInventoryCellPosition(index: number): {
@@ -1974,7 +2575,10 @@ export class BottomMenu {
     }
 
     private refreshEquipmentTab(): void {
-        if (this.renderedEquipmentVersion === this.equipmentManager.getVersion()) {
+        if (
+            this.renderedEquipmentVersion === this.equipmentManager.getVersion() &&
+            this.renderedEquipmentInventoryVersion === this.inventory.getVersion()
+        ) {
             return;
         }
 

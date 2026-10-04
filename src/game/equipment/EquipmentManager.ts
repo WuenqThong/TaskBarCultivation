@@ -108,6 +108,23 @@ export class EquipmentManager {
         this.version += 1;
     }
 
+    public refreshEquippedItemModifiers(
+        equipment: EquipmentInstance,
+    ): void {
+        const slot = equipment.definition.slot;
+        const equipped = this.equipped.get(slot);
+
+        if (!equipped || equipped.instanceId !== equipment.instanceId) {
+            return;
+        }
+
+        this.removeEquipmentModifiers(equipped);
+        this.equipped.set(slot, equipment);
+        this.addEquipmentModifiers(equipment);
+        this.player.syncCurrentResourcesWithMaxStats();
+        this.version += 1;
+    }
+
     private addEquipmentModifiers(
         equipment: EquipmentInstance,
     ): void {
