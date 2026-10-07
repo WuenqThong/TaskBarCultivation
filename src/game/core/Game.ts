@@ -13,7 +13,7 @@ export class Game {
     public async init(): Promise<void> {
         await this.app.init({
             width: 1280,
-            height: 240,
+            height: 360,
             background: "#18181f",
             antialias: false,
         });

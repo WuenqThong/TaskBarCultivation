@@ -7,6 +7,7 @@ import {
 import type { SkillDefinition } from "./Skill";
 import type { SkillManager } from "./SkillManager";
 import { SKILL_IDS } from "./skillData";
+import type { SkillVfxSystem } from "./SkillVfxSystem";
 
 export interface SkillDamageEvent {
     enemy: Enemy;
@@ -19,32 +20,33 @@ interface SkillCombatCallbacks {
     onHeal: (amount: number) => void;
 }
 
-const AUTO_CAST_PRIORITY: ReadonlyArray<string> = [
-    SKILL_IDS.ORIGIN_RECOVERY,
-    SKILL_IDS.TEN_THOUSAND_SWORDS,
-    SKILL_IDS.SWORD_QI,
-];
-
 export class SkillCombatSystem {
     private player: Player;
     private skillManager: SkillManager;
     private getEnemies: () => ReadonlyArray<Enemy>;
     private callbacks: SkillCombatCallbacks;
+    private vfx: SkillVfxSystem;
 
     constructor(
         player: Player,
         skillManager: SkillManager,
         getEnemies: () => ReadonlyArray<Enemy>,
+        vfx: SkillVfxSystem,
         callbacks: SkillCombatCallbacks,
     ) {
         this.player = player;
         this.skillManager = skillManager;
         this.getEnemies = getEnemies;
+        this.vfx = vfx;
         this.callbacks = callbacks;
     }
 
     public updateAutoCast(): boolean {
-        for (const skillId of AUTO_CAST_PRIORITY) {
+        const equipped = this.skillManager.getEquippedSkillIds()
+            .filter((skillId) => skillId !== SKILL_IDS.NORMAL_SLASH)
+            .sort((left, right) => this.getAutoCastPriority(left) - this.getAutoCastPriority(right));
+
+        for (const skillId of equipped) {
             const state = this.skillManager.getSkillState(skillId);
 
             if (state?.autoCastEnabled && this.shouldAutoCast(skillId)) {
@@ -58,11 +60,16 @@ export class SkillCombatSystem {
     public cast(skillId: string): boolean {
         const definition = this.skillManager.getSkillDefinition(skillId);
 
-        if (!definition || !this.skillManager.canCast(skillId)) {
+        if (
+            !definition ||
+            !this.skillManager.canCast(skillId) ||
+            this.player.isCombatAnimationLocked()
+        ) {
             return false;
         }
 
         const livingEnemies = this.getLivingEnemies();
+        const nearestEnemy = this.getNearestEnemy(livingEnemies);
 
         if (
             definition.targetType !== SkillTargetType.SELF &&
@@ -71,12 +78,44 @@ export class SkillCombatSystem {
             return false;
         }
 
-        if (!this.player.spendMp(definition.mpCost)) {
+        if (
+            definition.targetType === SkillTargetType.SINGLE_ENEMY &&
+            nearestEnemy &&
+            Math.abs(nearestEnemy.getX() - this.player.getView().x) > (definition.range ?? 180)
+        ) {
             return false;
         }
 
-        this.applyEffect(definition, livingEnemies);
-        this.skillManager.startCooldown(skillId);
+        if (!this.player.spendMp(this.skillManager.getEffectiveMpCost(skillId))) {
+            return false;
+        }
+
+        this.skillManager.setPhase(skillId, "casting");
+        if (definition.animation === "slash") {
+            this.player.playAttack();
+        } else {
+            this.player.playSpell();
+        }
+
+        const activate = () => {
+            this.skillManager.setPhase(skillId, "active");
+            this.applyEffect(definition, livingEnemies);
+        };
+        const finish = () => this.skillManager.startCooldown(skillId);
+
+        const vfxProfile = definition.vfxProfile ?? definition.id;
+        if (vfxProfile === "normal-slash" && nearestEnemy) {
+            this.vfx.playNormalSlash(nearestEnemy, { onHit: activate, onComplete: finish });
+        } else if (vfxProfile === "sword-qi" && nearestEnemy) {
+            this.vfx.playSwordQi(nearestEnemy, { onHit: activate, onComplete: finish });
+        } else if (vfxProfile === "ten-thousand-swords") {
+            this.vfx.playTenThousandSwords(livingEnemies, { onHit: activate, onComplete: finish });
+        } else if (vfxProfile === "heal") {
+            this.vfx.playHeal({ onHit: activate, onComplete: finish });
+        } else {
+            activate();
+            finish();
+        }
 
         return true;
     }
@@ -87,12 +126,17 @@ export class SkillCombatSystem {
         }
 
         const livingEnemyCount = this.getLivingEnemies().length;
+        const definition = this.skillManager.getSkillDefinition(skillId);
 
-        if (skillId === SKILL_IDS.ORIGIN_RECOVERY) {
+        if (!definition) {
+            return false;
+        }
+
+        if (definition.effectType === SkillEffectType.HEAL) {
             return this.player.getHp() / this.player.getMaxHp() <= 0.5;
         }
 
-        if (skillId === SKILL_IDS.TEN_THOUSAND_SWORDS) {
+        if (definition.targetType === SkillTargetType.ALL_ENEMIES) {
             return livingEnemyCount >= 2;
         }
 
@@ -105,7 +149,7 @@ export class SkillCombatSystem {
     ): void {
         if (definition.effectType === SkillEffectType.HEAL) {
             const healAmount = this.player.restoreHp(
-                this.player.getMaxHp() * (definition.healPercent ?? 0),
+                this.player.getMaxHp() * this.skillManager.getEffectiveHealPercent(definition.id),
             );
 
             this.callbacks.onHeal(healAmount);
@@ -117,12 +161,12 @@ export class SkillCombatSystem {
             : [this.getNearestEnemy(livingEnemies)];
 
         for (const enemy of targets) {
-            if (!enemy) {
+            if (!enemy || enemy.isDead()) {
                 continue;
             }
 
             const result = this.player.calculateDamage(
-                definition.damageMultiplier ?? 1,
+                this.skillManager.getEffectiveDamageMultiplier(definition.id),
             );
 
             enemy.takeDamage(result.damage);
@@ -148,5 +192,13 @@ export class SkillCombatSystem {
         }
 
         return nearest;
+    }
+
+    private getAutoCastPriority(skillId: string): number {
+        const definition = this.skillManager.getSkillDefinition(skillId);
+        if (!definition) return 99;
+        if (definition.effectType === SkillEffectType.HEAL) return 0;
+        if (definition.targetType === SkillTargetType.ALL_ENEMIES) return 1;
+        return 2;
     }
 }

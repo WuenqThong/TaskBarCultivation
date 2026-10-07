@@ -9,6 +9,7 @@ export class ArtifactManager {
     private states: Map<string, ArtifactState>;
     private equippedArtifactId: string | null;
     private version: number;
+    private progressionSlotLimit: number;
 
     constructor(
         player: Player,
@@ -19,6 +20,7 @@ export class ArtifactManager {
         this.states = new Map<string, ArtifactState>();
         this.equippedArtifactId = null;
         this.version = 0;
+        this.progressionSlotLimit = 1;
 
         for (const definition of definitions) {
             this.definitions.set(definition.id, definition);
@@ -80,6 +82,10 @@ export class ArtifactManager {
     }
 
     public equip(artifactId: string): boolean {
+        if (this.progressionSlotLimit < 1) {
+            return false;
+        }
+
         const definition = this.definitions.get(artifactId);
         const state = this.states.get(artifactId);
 
@@ -165,6 +171,23 @@ export class ArtifactManager {
 
     public getVersion(): number {
         return this.version;
+    }
+
+    public setProgressionSlotLimit(limit: number): void {
+        const nextLimit = Math.max(0, Math.floor(limit));
+        if (this.progressionSlotLimit === nextLimit) {
+            return;
+        }
+
+        this.progressionSlotLimit = nextLimit;
+        if (nextLimit < 1 && this.equippedArtifactId) {
+            this.unequip();
+        }
+        this.version += 1;
+    }
+
+    public getProgressionSlotLimit(): number {
+        return this.progressionSlotLimit;
     }
 
     public restoreStates(

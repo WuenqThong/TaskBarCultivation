@@ -1,33 +1,20 @@
 import {
     AnimatedSprite,
-    Assets,
     Container,
     Text,
     Texture,
 } from "pixi.js";
+import {
+    PlayerAnimationController,
+    type PlayerAnimationState,
+} from "../animation/PlayerAnimationController";
 import { PlayerStatSystem } from "../stats/PlayerStatSystem";
 import { StatType } from "../stats/StatType";
-
-const HERO_ASSET_PATH =
-    "/assets/hero";
-
-const createFramePaths = (
-    animation: string,
-    frameCount: number,
-): string[] =>
-    Array.from(
-        { length: frameCount },
-        (_, index) =>
-            `${HERO_ASSET_PATH}/${animation}/frame_${index
-                .toString()
-                .padStart(3, "0")}.png`,
-    );
 
 export class Player {
     private container: Container;
     private body: AnimatedSprite;
-    private idleTextures: Texture[];
-    private attackTextures: Texture[];
+    private animationController: PlayerAnimationController;
     private nameText: Text;
     private hpText: Text;
     private mpText: Text;
@@ -35,30 +22,28 @@ export class Player {
     private statSystem: PlayerStatSystem;
     private currentHp: number;
     private currentMp: number;
+    private facingDirection: 1 | -1 = 1;
 
     private constructor(
-        idleTextures: Texture[],
-        attackTextures: Texture[],
+        animations: Readonly<Record<PlayerAnimationState, Texture[]>>,
     ) {
         this.container = new Container();
-
-        this.idleTextures = idleTextures;
-        this.attackTextures =
-            attackTextures;
 
         this.statSystem = new PlayerStatSystem();
         this.currentHp = this.getMaxHp();
         this.currentMp = this.getMaxMp();
 
         this.body = new AnimatedSprite(
-            this.idleTextures,
+            animations.idle,
         );
 
         this.body.anchor.set(0.5);
         this.body.scale.set(1.5);
-        this.body.animationSpeed = 0.08;
-        this.body.loop = true;
-        this.body.play();
+        this.body.roundPixels = true;
+        this.animationController = new PlayerAnimationController(
+            this.body,
+            animations,
+        );
 
         this.nameText = new Text({
             text: "Hero",
@@ -104,40 +89,8 @@ export class Player {
     }
 
     public static async create(): Promise<Player> {
-        const [idleTextures, attackTextures] =
-            await Promise.all([
-                Promise.all(
-                    createFramePaths(
-                        "walk",
-                        6,
-                    ).map((path) =>
-                        Assets.load<Texture>(path),
-                    ),
-                ),
-                Promise.all(
-                    createFramePaths(
-                        "slash",
-                        6,
-                    ).map((path) =>
-                        Assets.load<Texture>(path),
-                    ),
-                ),
-            ]);
-
-        for (
-            const texture of [
-                ...idleTextures,
-                ...attackTextures,
-            ]
-        ) {
-            texture.source.scaleMode =
-                "nearest";
-        }
-
-        return new Player(
-            idleTextures,
-            attackTextures,
-        );
+        const animations = await PlayerAnimationController.load();
+        return new Player(animations);
     }
 
     public setPosition(
@@ -152,6 +105,18 @@ export class Player {
 
     public getView(): Container {
         return this.container;
+    }
+
+    /**
+     * The production bottom HUD already owns player name/HP/MP presentation.
+     * Keep the legacy world-space labels available for debug/alternate scenes,
+     * but allow the main scene to hide them so they do not bleed through the
+     * transparent taskbar frame.
+     */
+    public setWorldStatusVisible(visible: boolean): void {
+        this.nameText.visible = visible;
+        this.hpText.visible = visible;
+        this.mpText.visible = visible;
     }
 
     public getHp(): number {
@@ -241,20 +206,40 @@ export class Player {
     }
 
     public playAttack(): void {
-        this.body.stop();
-        this.body.textures =
-            this.attackTextures;
-        this.body.loop = false;
-        this.body.animationSpeed = 0.35;
-        this.body.onComplete = () => {
-            this.body.onComplete = undefined;
-            this.body.textures =
-                this.idleTextures;
-            this.body.loop = true;
-            this.body.animationSpeed = 0.08;
-            this.body.play();
-        };
-        this.body.gotoAndPlay(0);
+        this.animationController.slash();
+    }
+
+    public playSpell(): void {
+        this.animationController.spell();
+    }
+
+    public playIdle(): void {
+        this.animationController.idle();
+    }
+
+    public playWalk(): void {
+        this.animationController.walk();
+    }
+
+    public playRun(): void {
+        this.animationController.run();
+    }
+
+    public getAnimationState(): PlayerAnimationState {
+        return this.animationController.getState();
+    }
+
+    public setFacingDirection(direction: 1 | -1): void {
+        this.facingDirection = direction;
+        this.body.scale.x = Math.abs(this.body.scale.x) * direction;
+    }
+
+    public getFacingDirection(): 1 | -1 {
+        return this.facingDirection;
+    }
+
+    public isCombatAnimationLocked(): boolean {
+        return this.animationController.isCombatLocked();
     }
 
     public takeDamage(

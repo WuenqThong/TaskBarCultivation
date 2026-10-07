@@ -192,6 +192,7 @@ export class SaveManager {
                     level: state.level,
                     autoCastEnabled: state.autoCastEnabled,
                 })),
+                loadout: skillManager.getLoadout(),
             },
         };
     }
@@ -483,6 +484,7 @@ export class SaveManager {
             return Number.isFinite(state.level);
         });
         skillManager.restoreStates(skillStates);
+        skillManager.restoreLoadout(data.skills.loadout);
         skillManager.resetCooldowns();
 
         if (!stageSystem.restoreProgress(

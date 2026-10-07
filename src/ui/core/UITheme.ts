@@ -1,0 +1,17 @@
+export const UITheme = {
+    bronze: 0x6f5737,
+    bronzeDark: 0x241c17,
+    gold: 0xc6a15b,
+    goldBright: 0xf0d58a,
+    jade: 0x57b98f,
+    jadeDark: 0x173e35,
+    ink: 0x0d1110,
+    panel: 0x171b19,
+    panelSoft: 0x222825,
+    text: 0xf4ead2,
+    textMuted: 0xb8ad92,
+    hp: 0xb94a45,
+    qi: 0x4d91b8,
+    cultivation: 0x65ad72,
+    disabled: 0x555b57,
+} as const;

@@ -9,6 +9,22 @@ export enum SkillEffectType {
     HEAL = "heal",
 }
 
+export type SkillVfxProfile =
+    | "normal-slash"
+    | "sword-qi"
+    | "ten-thousand-swords"
+    | "heal";
+
+export interface SkillProgressionDefinition {
+    maxLevel: number;
+    upgradeCostBase: number;
+    upgradeCostGrowth: number;
+    damageMultiplierPerLevel?: number;
+    healPercentPerLevel?: number;
+    mpCostPerLevel?: number;
+    cooldownPerLevel?: number;
+}
+
 export interface SkillDefinition {
     id: string;
     name: string;
@@ -19,4 +35,10 @@ export interface SkillDefinition {
     effectType: SkillEffectType;
     damageMultiplier?: number;
     healPercent?: number;
+    range?: number;
+    castTime?: number;
+    animation?: "slash" | "spell";
+    icon?: string;
+    vfxProfile?: SkillVfxProfile;
+    progression: SkillProgressionDefinition;
 }

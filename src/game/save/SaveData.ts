@@ -88,6 +88,7 @@ export interface SkillStateSaveData {
 
 export interface SkillSaveData {
     states: SkillStateSaveData[];
+    loadout?: Array<string | null>;
 }
 
 export interface GameSaveData {

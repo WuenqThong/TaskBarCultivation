@@ -27,6 +27,7 @@ import {
     CultivationStage,
 } from "../cultivation/CultivationStage";
 import { CultivationSystem } from "../cultivation/CultivationSystem";
+import type { BreakthroughRewardSystem } from "../cultivation/BreakthroughRewardSystem";
 import { CULTIVATION_LAYERS_PER_STAGE } from "../cultivation/cultivationConfig";
 import { Player } from "../entities/Player";
 import type { EquipmentInstance } from "../equipment/EquipmentInstance";
@@ -53,7 +54,6 @@ import { ITEM_DATA } from "../items/itemData";
 import { isMaterialDefinition } from "../materials/Material";
 import { MATERIAL_CATEGORY_LABELS } from "../materials/MaterialCategory";
 import { MATERIAL_DEFINITIONS } from "../materials/materialData";
-import type { SkillCombatSystem } from "../skills/SkillCombatSystem";
 import type { SkillDefinition } from "../skills/Skill";
 import type { SkillManager } from "../skills/SkillManager";
 import type { SkillState } from "../skills/SkillState";
@@ -68,10 +68,11 @@ import type { StatModifier } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
 import { StageSystem } from "../systems/StageSystem";
 import { TechniqueManager } from "../techniques/TechniqueManager";
+import { CharacterProgressionPanel } from "./CharacterProgressionPanel";
 import { MenuTab } from "./MenuTab";
 
 const GAME_WIDTH = 1280;
-const GAME_HEIGHT = 240;
+const GAME_HEIGHT = 360;
 const MENU_HEIGHT = 300;
 const OPEN_HEIGHT = GAME_HEIGHT + MENU_HEIGHT;
 const TAB_BUTTON_WIDTH = 119;
@@ -171,12 +172,13 @@ export class BottomMenu {
     private artifactManager: ArtifactManager;
     private techniqueManager: TechniqueManager;
     private skillManager: SkillManager;
-    private skillCombatSystem: SkillCombatSystem;
+    private breakthroughRewardSystem: BreakthroughRewardSystem;
     private refiningManager: RefiningManager;
     private craftingManager: CraftingManager;
     private alchemyManager: AlchemyManager;
     private buffManager: BuffManager;
     private getSpiritStone: () => number;
+    private spendSpiritStone: (amount: number) => boolean;
     private saveManager: SaveManager;
     private onPersistentStateChanged: () => void;
     private container: Container;
@@ -206,10 +208,9 @@ export class BottomMenu {
     private selectedAlchemyCatalysts: Map<string, string | undefined>;
     private lastPillCraftResult: PillCraftResult | null;
     private saveStatusMessage: string;
+    private skillStatusMessage: string;
 
-    private characterPrimaryStatsText: Text | null;
-    private characterSecondaryStatsText: Text | null;
-    private characterProgressText: Text | null;
+    private characterProgressionPanel: CharacterProgressionPanel | null;
     private cultivationDetailsText: Text | null;
     private cultivationProgressText: Text | null;
     private cultivationStatusText: Text | null;
@@ -227,12 +228,13 @@ export class BottomMenu {
         artifactManager: ArtifactManager,
         techniqueManager: TechniqueManager,
         skillManager: SkillManager,
-        skillCombatSystem: SkillCombatSystem,
+        breakthroughRewardSystem: BreakthroughRewardSystem,
         refiningManager: RefiningManager,
         craftingManager: CraftingManager,
         alchemyManager: AlchemyManager,
         buffManager: BuffManager,
         getSpiritStone: () => number,
+        spendSpiritStone: (amount: number) => boolean,
         saveManager: SaveManager,
         onPersistentStateChanged: () => void,
     ) {
@@ -248,12 +250,13 @@ export class BottomMenu {
         this.artifactManager = artifactManager;
         this.techniqueManager = techniqueManager;
         this.skillManager = skillManager;
-        this.skillCombatSystem = skillCombatSystem;
+        this.breakthroughRewardSystem = breakthroughRewardSystem;
         this.refiningManager = refiningManager;
         this.craftingManager = craftingManager;
         this.alchemyManager = alchemyManager;
         this.buffManager = buffManager;
         this.getSpiritStone = getSpiritStone;
+        this.spendSpiritStone = spendSpiritStone;
         this.saveManager = saveManager;
         this.onPersistentStateChanged = onPersistentStateChanged;
         this.container = new Container();
@@ -290,10 +293,9 @@ export class BottomMenu {
         this.selectedAlchemyCatalysts = new Map();
         this.lastPillCraftResult = null;
         this.saveStatusMessage = "";
+        this.skillStatusMessage = "";
 
-        this.characterPrimaryStatsText = null;
-        this.characterSecondaryStatsText = null;
-        this.characterProgressText = null;
+        this.characterProgressionPanel = null;
         this.cultivationDetailsText = null;
         this.cultivationProgressText = null;
         this.cultivationStatusText = null;
@@ -324,7 +326,7 @@ export class BottomMenu {
 
         this.refreshTimer = 0;
         if (this.activeTab === MenuTab.CHARACTER) {
-            this.updateCharacterTexts();
+            this.characterProgressionPanel?.refresh();
         }
 
         if (this.activeTab === MenuTab.INVENTORY) {
@@ -382,6 +384,16 @@ export class BottomMenu {
 
     public isOpen(): boolean {
         return this.openState;
+    }
+
+    public openTab(tab: MenuTab): void {
+        this.activeTab = tab;
+        this.open();
+        this.switchTab(tab);
+    }
+
+    public setLegacyToggleVisible(visible: boolean): void {
+        this.toggleButton.visible = visible;
     }
 
     private createPanel(): Container {
@@ -473,9 +485,7 @@ export class BottomMenu {
     private renderActiveTab(): void {
         this.tabContainer.removeChildren();
 
-        this.characterPrimaryStatsText = null;
-        this.characterSecondaryStatsText = null;
-        this.characterProgressText = null;
+        this.characterProgressionPanel = null;
         this.cultivationDetailsText = null;
         this.cultivationProgressText = null;
         this.cultivationStatusText = null;
@@ -630,27 +640,16 @@ export class BottomMenu {
     }
 
     private renderCharacterTab(): void {
-        const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.CHARACTER],
-            0,
-            24,
-        );
-
-        this.characterPrimaryStatsText = this.createContentText("", 36, 16);
-        this.characterSecondaryStatsText = this.createContentText("", 36, 16);
-        this.characterProgressText = this.createContentText("", 36, 16);
-
-        this.characterSecondaryStatsText.x = 300;
-        this.characterProgressText.x = 720;
-
-        this.tabContainer.addChild(
-            title,
-            this.characterPrimaryStatsText,
-            this.characterSecondaryStatsText,
-            this.characterProgressText,
-        );
-
-        this.updateCharacterTexts();
+        this.characterProgressionPanel = new CharacterProgressionPanel({
+            player: this.player,
+            cultivationSystem: this.cultivationSystem,
+            stageSystem: this.stageSystem,
+            equipmentManager: this.equipmentManager,
+            techniqueManager: this.techniqueManager,
+            artifactManager: this.artifactManager,
+            getSpiritStone: this.getSpiritStone,
+        });
+        this.tabContainer.addChild(this.characterProgressionPanel.getView());
     }
 
     private renderCultivationTab(): void {
@@ -681,6 +680,7 @@ export class BottomMenu {
                 30,
                 () => {
                     if (this.cultivationSystem.breakthrough()) {
+                        this.breakthroughRewardSystem.reconcile(true);
                         this.renderActiveTab();
                     } else if (this.cultivationStatusText) {
                         this.cultivationStatusText.text = "Chưa đủ Tu Vi";
@@ -714,6 +714,11 @@ export class BottomMenu {
         this.cultivationProgressText.text = [
             `Tu Vi: ${this.formatNumber(this.cultivationSystem.getCultivation())} / ${this.formatNumber(this.cultivationSystem.getRequiredCultivation())}`,
             `Tốc độ tu luyện: ${this.formatNumber(this.cultivationSystem.getCultivationPerSecond())} / giây`,
+            `Ô kỹ năng: ${this.breakthroughRewardSystem.getSkillSlotCount()} / 5`,
+            `Ô công pháp: ${this.breakthroughRewardSystem.getTechniqueSlotCount()}`,
+            `Ô pháp bảo: ${this.breakthroughRewardSystem.getArtifactSlotCount()}`,
+            `Nội tại: ${this.breakthroughRewardSystem.getUnlockedPassives().join(", ") || "Chưa mở"}`,
+            this.breakthroughRewardSystem.getNextRewardSummary(),
         ].join("\n");
 
         if (this.cultivationSystem.isMaxCultivation()) {
@@ -749,68 +754,131 @@ export class BottomMenu {
             24,
         );
 
-        this.tabContainer.addChild(title);
+        const status = this.createContentText(
+            `${this.skillStatusMessage || "Bấm ô 2–5 để đổi skill trong build."}   Linh Thạch: ${this.getSpiritStone()}`,
+            5,
+            12,
+        );
+        status.x = 145;
+        status.style.fill = "#facc15";
+        this.tabContainer.addChild(title, status);
+
+        for (let slotIndex = 0; slotIndex < 5; slotIndex += 1) {
+            const unlocked = slotIndex < this.skillManager.getUnlockedSlotCount();
+            const skillId = this.skillManager.getEquippedSkillId(slotIndex);
+            const skillName = skillId
+                ? this.skillManager.getSkillDefinition(skillId)?.name ?? "?"
+                : "TRỐNG";
+            const button = this.createMenuActionButton(
+                unlocked ? `${slotIndex + 1}. ${skillName}` : `${slotIndex + 1}. KHÓA`,
+                200,
+                24,
+                () => {
+                    if (unlocked && slotIndex > 0) {
+                        this.cycleSkillSlot(slotIndex);
+                    }
+                },
+                unlocked ? (slotIndex === 0 ? "#d4d4d8" : "#86efac") : "#71717a",
+                10,
+            );
+            button.position.set(slotIndex * 206, 31);
+            this.tabContainer.addChild(button);
+        }
 
         this.skillManager.getAllSkills().forEach(({ definition, state }, index) => {
-            this.renderSkillCard(definition, state, index * 400);
+            this.renderSkillCard(definition, state, index);
         });
     }
 
     private renderSkillCard(
         definition: SkillDefinition,
         state: SkillState,
-        x: number,
+        index: number,
     ): void {
-        const nameText = this.createContentText(definition.name, 35, 18);
+        const column = index % 4;
+        const row = Math.floor(index / 4);
+        const x = column * 305;
+        const y = 63 + row * 82;
+        const equippedSlot = this.skillManager.getLoadout().findIndex(
+            (skillId) => skillId === definition.id,
+        );
+        const maxLevel = definition.progression.maxLevel;
+        const upgradeCost = this.skillManager.getUpgradeCost(definition.id);
+        const power = definition.damageMultiplier !== undefined
+            ? `ST ${this.formatNumber(this.skillManager.getEffectiveDamageMultiplier(definition.id) * 100)}%`
+            : `Hồi ${this.formatNumber(this.skillManager.getEffectiveHealPercent(definition.id) * 100)}%`;
+        const nameText = this.createContentText(
+            `${state.unlocked ? "" : "🔒 "}${definition.name}${equippedSlot >= 0 ? ` [Ô ${equippedSlot + 1}]` : ""}`,
+            y,
+            14,
+        );
         const detailsText = this.createContentText(
-            [
-                `Cấp: ${state.level}`,
-                `MP: ${this.formatNumber(definition.mpCost)}`,
-                `CD: ${this.formatNumber(this.skillManager.getEffectiveCooldown(definition.id))}s ` +
-                    `(gốc ${this.formatNumber(definition.baseCooldown)}s)`,
-                definition.description,
-                `CD còn: ${this.formatNumber(state.remainingCooldown)}s`,
-            ].join("\n"),
-            59,
-            13,
-        );
-        const autoButton = this.createMenuActionButton(
-            `TỰ ĐỘNG: ${state.autoCastEnabled ? "BẬT" : "TẮT"}`,
-            145,
-            28,
-            () => {
-                this.skillManager.setAutoCast(
-                    definition.id,
-                    !state.autoCastEnabled,
-                );
-                this.renderSkillTab();
-            },
-            state.autoCastEnabled ? "#86efac" : "#fca5a5",
-            12,
-        );
-        const castButton = this.createMenuActionButton(
-            "DÙNG",
-            90,
-            28,
-            () => {
-                this.skillCombatSystem.cast(definition.id);
-                this.renderSkillTab();
-            },
-            "#ffffff",
-            12,
+            `Lv ${state.level}/${maxLevel} · ${power} · MP ${this.formatNumber(this.skillManager.getEffectiveMpCost(definition.id))} · CD ${this.formatNumber(this.skillManager.getEffectiveCooldown(definition.id))}s`,
+            y + 21,
+            10,
         );
 
         nameText.x = x;
         detailsText.x = x;
-        autoButton.position.set(x, 158);
-        castButton.position.set(x + 155, 158);
+        if (!state.unlocked) {
+            nameText.style.fill = "#71717a";
+            detailsText.style.fill = "#71717a";
+            this.tabContainer.addChild(nameText, detailsText);
+            return;
+        }
 
-        this.tabContainer.addChild(
-            nameText,
-            detailsText,
-            autoButton,
-            castButton,
+        const upgradeButton = this.createMenuActionButton(
+            upgradeCost === null ? "MAX" : `NÂNG ${upgradeCost}`,
+            112,
+            22,
+            () => {
+                if (upgradeCost === null) return;
+                const upgraded = this.skillManager.upgradeSkill(
+                    definition.id,
+                    this.spendSpiritStone,
+                );
+                this.skillStatusMessage = upgraded
+                    ? `${definition.name} đã lên cấp ${state.level + 1}.`
+                    : `Không đủ Linh Thạch để nâng ${definition.name}.`;
+                this.renderSkillTab();
+            },
+            upgradeCost === null ? "#a1a1aa" : "#fde68a",
+            10,
         );
+        const autoButton = this.createMenuActionButton(
+            `AUTO ${state.autoCastEnabled ? "ON" : "OFF"}`,
+            82,
+            22,
+            () => {
+                this.skillManager.setAutoCast(definition.id, !state.autoCastEnabled);
+                this.renderSkillTab();
+            },
+            state.autoCastEnabled ? "#86efac" : "#fca5a5",
+            10,
+        );
+        upgradeButton.position.set(x, y + 43);
+        autoButton.position.set(x + 118, y + 43);
+        this.tabContainer.addChild(nameText, detailsText, upgradeButton, autoButton);
+    }
+
+    private cycleSkillSlot(slotIndex: number): void {
+        const basicSkillId = this.skillManager.getEquippedSkillId(0);
+        const candidates = this.skillManager.getAllSkills()
+            .filter(({ definition, state }) => state.unlocked && definition.id !== basicSkillId)
+            .map(({ definition }) => definition.id);
+        if (candidates.length === 0) return;
+
+        const current = this.skillManager.getEquippedSkillId(slotIndex);
+        const currentIndex = current ? candidates.indexOf(current) : -1;
+        for (let offset = 1; offset <= candidates.length; offset += 1) {
+            const candidate = candidates[(currentIndex + offset) % candidates.length];
+            if (this.skillManager.equipSkill(candidate, slotIndex)) {
+                const name = this.skillManager.getSkillDefinition(candidate)?.name ?? candidate;
+                this.skillStatusMessage = `Đã gắn ${name} vào ô ${slotIndex + 1}.`;
+                this.renderSkillTab();
+                return;
+            }
+        }
     }
 
     private renderRefiningTab(): void {
@@ -1610,6 +1678,7 @@ export class BottomMenu {
                     CultivationStage.EARLY,
                     1,
                 );
+                this.breakthroughRewardSystem.reconcile(true);
                 this.equipmentStatusMessage = "Đã đặt cảnh giới: Luyện Khí";
                 this.renderEquipmentTab();
             },
@@ -1626,6 +1695,7 @@ export class BottomMenu {
                     CultivationStage.EARLY,
                     1,
                 );
+                this.breakthroughRewardSystem.reconcile(true);
                 this.equipmentStatusMessage = "Đã đặt cảnh giới: Trúc Cơ";
                 this.renderEquipmentTab();
             },
@@ -1932,6 +2002,10 @@ export class BottomMenu {
                 ? `Đã nâng cấp ${definition.name}`
                 : `Đã học ${definition.name}`;
             this.renderTechniqueTab();
+        } else if (!learned) {
+            this.techniqueStatusMessage =
+                `Đã dùng ${this.techniqueManager.getLearnedTechniqueCount()} / ${this.breakthroughRewardSystem.getTechniqueSlotCount()} ô Công Pháp. Hãy đột phá để mở thêm.`;
+            this.renderTechniqueTab();
         }
     }
 
@@ -2076,6 +2150,9 @@ export class BottomMenu {
                     this.artifactStatusMessage = equipped
                         ? "Đã tháo Pháp Bảo"
                         : "Đã trang bị Pháp Bảo";
+                    this.renderArtifactTab();
+                } else if (!equipped && this.breakthroughRewardSystem.getArtifactSlotCount() < 1) {
+                    this.artifactStatusMessage = "Chưa mở ô Pháp Bảo. Hãy tiếp tục đột phá.";
                     this.renderArtifactTab();
                 }
             },
@@ -2560,7 +2637,7 @@ export class BottomMenu {
 
         this.refreshTimer = 0;
         if (this.activeTab === MenuTab.CHARACTER) {
-            this.updateCharacterTexts();
+            this.characterProgressionPanel?.refresh();
         } else {
             this.updateCultivationTexts();
         }
@@ -2602,39 +2679,6 @@ export class BottomMenu {
         }
 
         this.renderTechniqueTab();
-    }
-
-    private updateCharacterTexts(): void {
-        if (
-            !this.characterPrimaryStatsText ||
-            !this.characterSecondaryStatsText ||
-            !this.characterProgressText
-        ) {
-            return;
-        }
-
-        this.characterPrimaryStatsText.text = [
-            `HP: ${this.formatNumber(this.player.getHp())} / ${this.formatNumber(this.player.getMaxHp())}`,
-            `MP: ${this.formatNumber(this.player.getMp())} / ${this.formatNumber(this.player.getMaxMp())}`,
-            `Công: ${this.formatNumber(this.player.getAttack())}`,
-            `Thủ: ${this.formatNumber(this.player.getDefense())}`,
-        ].join("\n");
-
-        this.characterSecondaryStatsText.text = [
-            `Tỷ lệ bạo kích: ${this.formatPercent(this.player.getCritRate())}`,
-            `Sát thương bạo kích: ${this.formatPercent(this.player.getCritDamage())}`,
-            `Tốc độ tu luyện: ${this.formatPercent(this.player.getCultivationSpeed())}`,
-            `Hồi kỹ năng: ${this.formatPercent(this.player.getSkillCooldownRecovery())}`,
-        ].join("\n");
-
-        this.characterProgressText.text = [
-            `Cảnh giới: ${CULTIVATION_REALM_LABELS[this.cultivationSystem.getRealm()]} - ${CULTIVATION_STAGE_LABELS[this.cultivationSystem.getStage()]} - Tầng ${this.cultivationSystem.getLayer()}`,
-            `Hồi HP: ${this.formatNumber(this.player.getHpRegen())} / giây`,
-            `Hồi MP: ${this.formatNumber(this.player.getMpRegen())} / giây`,
-            `Chương: ${this.stageSystem.getChapter()}`,
-            `Ải: ${this.stageSystem.getStage()}`,
-            `Linh Thạch: ${this.getSpiritStone()}`,
-        ].join("\n");
     }
 
     private formatPercent(value: number): string {

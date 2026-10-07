@@ -16,6 +16,7 @@ export class TechniqueManager {
     private definitions: Map<string, TechniqueDefinition>;
     private states: Map<string, TechniqueState>;
     private version: number;
+    private progressionSlotLimit: number;
 
     constructor(
         statSystem: PlayerStatSystem,
@@ -27,6 +28,7 @@ export class TechniqueManager {
         this.definitions = new Map<string, TechniqueDefinition>();
         this.states = new Map<string, TechniqueState>();
         this.version = 0;
+        this.progressionSlotLimit = Number.POSITIVE_INFINITY;
 
         for (const definition of definitions) {
             this.definitions.set(definition.id, definition);
@@ -42,7 +44,12 @@ export class TechniqueManager {
         const definition = this.definitions.get(techniqueId);
         const state = this.states.get(techniqueId);
 
-        if (!definition || !state || state.learned) {
+        if (
+            !definition ||
+            !state ||
+            state.learned ||
+            this.getLearnedTechniqueCount() >= this.progressionSlotLimit
+        ) {
             return false;
         }
 
@@ -134,6 +141,23 @@ export class TechniqueManager {
 
     public getVersion(): number {
         return this.version;
+    }
+
+    public setProgressionSlotLimit(limit: number): void {
+        const nextLimit = Math.max(0, Math.floor(limit));
+        if (this.progressionSlotLimit === nextLimit) {
+            return;
+        }
+        this.progressionSlotLimit = nextLimit;
+        this.version += 1;
+    }
+
+    public getProgressionSlotLimit(): number {
+        return this.progressionSlotLimit;
+    }
+
+    public getLearnedTechniqueCount(): number {
+        return Array.from(this.states.values()).filter((state) => state.learned).length;
     }
 
     public restoreStates(
