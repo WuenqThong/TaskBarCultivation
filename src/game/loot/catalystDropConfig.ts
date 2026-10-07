@@ -18,7 +18,7 @@ export const BOSS_CATALYST_DROP_TABLES: ReadonlyArray<
     {
         minChapter: 1,
         maxChapter: 2,
-        dropChance: 0.4,
+        dropChance: 0.75,
         entries: [
             { catalystId: CATALYST_DATA.LOW_GRADE_FORTUNE_STONE.id, weight: 45 },
             { catalystId: CATALYST_DATA.LOW_GRADE_ALCHEMY_FLAME.id, weight: 45 },

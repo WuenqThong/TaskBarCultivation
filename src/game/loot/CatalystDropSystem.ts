@@ -23,8 +23,14 @@ export class CatalystDropSystem {
         this.random = random;
     }
 
-    public rollDrop(chapter: number, isBoss: boolean): CatalystDrop | null {
-        if (!isBoss) {
+    public rollDrop(
+        chapter: number,
+        stage: number,
+        isBoss: boolean,
+    ): CatalystDrop | null {
+        const isMilestone = stage > 0 && stage < 50 && stage % 10 === 0;
+
+        if (!isBoss && !isMilestone) {
             return null;
         }
 
@@ -34,7 +40,11 @@ export class CatalystDropSystem {
                 chapter <= candidate.maxChapter,
         );
 
-        if (!table || this.random() >= table.dropChance) {
+        const dropChance = isBoss
+            ? table?.dropChance ?? 0
+            : Math.min(0.3, (table?.dropChance ?? 0) * 0.4);
+
+        if (!table || this.random() >= dropChance) {
             return null;
         }
 

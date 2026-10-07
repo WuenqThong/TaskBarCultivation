@@ -71,6 +71,7 @@ import type { StageConfig } from "../systems/StageSystem";
 import { TechniqueManager } from "../techniques/TechniqueManager";
 import { TECHNIQUE_DATA } from "../techniques/techniqueData";
 import { BottomMenu } from "../ui/BottomMenu";
+import { CharacterProgressionPanel } from "../ui/CharacterProgressionPanel";
 import { MenuTab } from "../ui/MenuTab";
 import { PlayerBottomHUD } from "../../ui/hud/PlayerBottomHUD";
 import { BossHUD } from "../../ui/enemy/BossHUD";
@@ -184,6 +185,7 @@ export class MainScene {
         await Promise.all([
             this.createPlayer(),
             PlayerBottomHUD.loadAssets(),
+            CharacterProgressionPanel.loadAssets(),
             SkillVfxSystem.loadAssets(),
             loadEnemyAssets(),
         ]);

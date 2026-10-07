@@ -42,9 +42,13 @@ export const BASE_STAT_ROLL_RANGES: Readonly<
     [StatType.ATTACK]: { min: 5, max: 10 },
     [StatType.DEFENSE]: { min: 2, max: 5 },
     [StatType.MAX_HP]: { min: 15, max: 30 },
+    [StatType.MAX_MP]: { min: 8, max: 18 },
     [StatType.CRIT_RATE]: { min: 0.01, max: 0.03 },
     [StatType.CRIT_DAMAGE]: { min: 0.05, max: 0.15 },
+    [StatType.CULTIVATION_SPEED]: { min: 0.03, max: 0.08 },
+    [StatType.SKILL_COOLDOWN_RECOVERY]: { min: 0.02, max: 0.06 },
     [StatType.HP_REGEN]: { min: 0.5, max: 1.5 },
+    [StatType.MP_REGEN]: { min: 0.4, max: 1.2 },
 };
 
 export const SLOT_STAT_POOLS: Readonly<
@@ -61,8 +65,11 @@ export const SLOT_STAT_POOLS: Readonly<
         StatType.HP_REGEN,
     ],
     [EquipmentSlot.BRACELET]: [
-        StatType.ATTACK,
         StatType.CRIT_RATE,
         StatType.CRIT_DAMAGE,
+        StatType.MAX_MP,
+        StatType.MP_REGEN,
+        StatType.CULTIVATION_SPEED,
+        StatType.SKILL_COOLDOWN_RECOVERY,
     ],
 };

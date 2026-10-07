@@ -1,8 +1,11 @@
 import {
     Application,
+    Assets,
     Container,
     Graphics,
+    Sprite,
     Text,
+    Texture,
 } from "pixi.js";
 import { ArtifactManager } from "../artifacts/ArtifactManager";
 import type { AlchemyManager } from "../alchemy/AlchemyManager";
@@ -20,17 +23,15 @@ import {
 } from "../crafting/CraftingCatalyst";
 import {
     CULTIVATION_REALM_LABELS,
-    CultivationRealm,
 } from "../cultivation/CultivationRealm";
-import {
-    CULTIVATION_STAGE_LABELS,
-    CultivationStage,
-} from "../cultivation/CultivationStage";
 import { CultivationSystem } from "../cultivation/CultivationSystem";
 import type { BreakthroughRewardSystem } from "../cultivation/BreakthroughRewardSystem";
-import { CULTIVATION_LAYERS_PER_STAGE } from "../cultivation/cultivationConfig";
 import { Player } from "../entities/Player";
 import type { EquipmentInstance } from "../equipment/EquipmentInstance";
+import {
+    EquipmentComparisonService,
+    type EquipmentComparison,
+} from "../equipment/EquipmentComparisonService";
 import { EquipmentManager } from "../equipment/EquipmentManager";
 import type { EquipmentSalvageManager } from "../equipment/EquipmentSalvageManager";
 import { EquipmentSalvageFailReason } from "../equipment/EquipmentSalvageManager";
@@ -50,19 +51,15 @@ import {
 } from "../equipment/EquipmentSlot";
 import { Inventory } from "../inventory/Inventory";
 import { ItemRarity, ItemType } from "../items/Item";
-import { ITEM_DATA } from "../items/itemData";
 import { isMaterialDefinition } from "../materials/Material";
 import { MATERIAL_CATEGORY_LABELS } from "../materials/MaterialCategory";
 import { MATERIAL_DEFINITIONS } from "../materials/materialData";
-import type { SkillDefinition } from "../skills/Skill";
 import type { SkillManager } from "../skills/SkillManager";
-import type { SkillState } from "../skills/SkillState";
 import type { CraftingManager } from "../crafting/CraftingManager";
 import { CraftFailReason } from "../crafting/CraftingResult";
 import type { EquipmentCraftResult } from "../refining/EquipmentCraftResult";
 import type { RefiningManager } from "../refining/RefiningManager";
 import type { SaveManager } from "../save/SaveManager";
-import { CURRENT_SAVE_VERSION } from "../save/SaveVersion";
 import { StatModifierType } from "../stats/StatModifier";
 import type { StatModifier } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
@@ -70,17 +67,27 @@ import { StageSystem } from "../systems/StageSystem";
 import { TechniqueManager } from "../techniques/TechniqueManager";
 import { CharacterProgressionPanel } from "./CharacterProgressionPanel";
 import { MenuTab } from "./MenuTab";
+import {
+    createMenuActionButton as createThemedMenuActionButton,
+    drawMenuPanelBackground,
+} from "./menu/MenuComponents";
+import { MENU_COLORS, MENU_FONT, MENU_LAYOUT } from "./menu/MenuTheme";
+import { MENU_ASSETS } from "./menu/MenuAssets";
+import { UI_ASSETS } from "../../ui/core/UIAssetRegistry";
+import { CultivationPanel } from "./menu/panels/CultivationPanel";
+import { SettingsPanel } from "./menu/panels/SettingsPanel";
+import { SkillsPanel } from "./menu/panels/SkillsPanel";
 
-const GAME_WIDTH = 1280;
-const GAME_HEIGHT = 360;
-const MENU_HEIGHT = 300;
-const OPEN_HEIGHT = GAME_HEIGHT + MENU_HEIGHT;
-const TAB_BUTTON_WIDTH = 119;
-const TAB_BUTTON_HEIGHT = 36;
-const TAB_BUTTON_GAP = 5;
-const TAB_NORMAL_COLOR = "#2a2a35";
-const TAB_ACTIVE_COLOR = "#4a4a65";
+const GAME_WIDTH = MENU_LAYOUT.gameWidth;
+const GAME_HEIGHT = MENU_LAYOUT.gameplayHeight;
+const MENU_HEIGHT = MENU_LAYOUT.menuHeight;
+const OPEN_HEIGHT = MENU_LAYOUT.openHeight;
+const TAB_BUTTON_WIDTH = 116;
+const TAB_BUTTON_HEIGHT = MENU_LAYOUT.tabHeight;
+const TAB_BUTTON_GAP = 4;
 const CHARACTER_REFRESH_INTERVAL = 250;
+const INVENTORY_PAGE_SIZE = 8;
+const EQUIPMENT_PAGE_SIZE = 6;
 const REFINING_RARITY_ORDER: ReadonlyArray<EquipmentRarity> = [
     EquipmentRarity.WHITE,
     EquipmentRarity.GREEN,
@@ -103,7 +110,7 @@ const TAB_LABELS: ReadonlyArray<readonly [MenuTab, string]> = [
     [MenuTab.SETTINGS, "Cài Đặt"],
 ];
 
-const TAB_PLACEHOLDERS: Readonly<Record<MenuTab, string>> = {
+const TAB_TITLES: Readonly<Record<MenuTab, string>> = {
     [MenuTab.CHARACTER]: "NHÂN VẬT",
     [MenuTab.EQUIPMENT]: "TRANG BỊ",
     [MenuTab.REFINING]: "LUYỆN KHÍ",
@@ -169,6 +176,7 @@ export class BottomMenu {
     private equipmentSalvageManager: EquipmentSalvageManager;
     private equipmentStatUnlockManager: EquipmentStatUnlockManager;
     private equipmentRerollManager: EquipmentRerollManager;
+    private equipmentComparisonService = new EquipmentComparisonService();
     private artifactManager: ArtifactManager;
     private techniqueManager: TechniqueManager;
     private skillManager: SkillManager;
@@ -197,6 +205,8 @@ export class BottomMenu {
     private renderedTechniqueVersion: number;
     private equipmentStatusMessage: string;
     private inventoryStatusMessage: string;
+    private inventoryPage: number;
+    private equipmentPage: number;
     private pendingSalvageInstanceId: string | null;
     private pendingStatUnlockInstanceId: string | null;
     private selectedRerollInstanceId: string | null;
@@ -207,13 +217,9 @@ export class BottomMenu {
     private lastEquipmentCraftResult: EquipmentCraftResult | null;
     private selectedAlchemyCatalysts: Map<string, string | undefined>;
     private lastPillCraftResult: PillCraftResult | null;
-    private saveStatusMessage: string;
-    private skillStatusMessage: string;
-
     private characterProgressionPanel: CharacterProgressionPanel | null;
-    private cultivationDetailsText: Text | null;
-    private cultivationProgressText: Text | null;
-    private cultivationStatusText: Text | null;
+    private cultivationPanel: CultivationPanel | null;
+    private skillsPanel: SkillsPanel | null;
 
     constructor(
         app: Application,
@@ -282,6 +288,8 @@ export class BottomMenu {
         this.renderedTechniqueVersion = -1;
         this.equipmentStatusMessage = "";
         this.inventoryStatusMessage = "";
+        this.inventoryPage = 0;
+        this.equipmentPage = 0;
         this.pendingSalvageInstanceId = null;
         this.pendingStatUnlockInstanceId = null;
         this.selectedRerollInstanceId = null;
@@ -292,13 +300,9 @@ export class BottomMenu {
         this.lastEquipmentCraftResult = null;
         this.selectedAlchemyCatalysts = new Map();
         this.lastPillCraftResult = null;
-        this.saveStatusMessage = "";
-        this.skillStatusMessage = "";
-
         this.characterProgressionPanel = null;
-        this.cultivationDetailsText = null;
-        this.cultivationProgressText = null;
-        this.cultivationStatusText = null;
+        this.cultivationPanel = null;
+        this.skillsPanel = null;
 
         this.container.addChild(this.panel);
         this.container.addChild(this.toggleButton);
@@ -346,7 +350,7 @@ export class BottomMenu {
         }
 
         if (this.activeTab === MenuTab.SKILLS) {
-            this.renderSkillTab();
+            this.skillsPanel?.refresh();
         }
 
         if (this.activeTab === MenuTab.REFINING) {
@@ -358,7 +362,7 @@ export class BottomMenu {
         }
 
         if (this.activeTab === MenuTab.CULTIVATION) {
-            this.updateCultivationTexts();
+            this.cultivationPanel?.refresh();
         }
     }
 
@@ -398,15 +402,13 @@ export class BottomMenu {
 
     private createPanel(): Container {
         const panel = new Container();
-        const background = new Graphics()
-            .rect(0, 0, GAME_WIDTH, MENU_HEIGHT)
-            .fill({ color: "#20202a" })
-            .stroke({ color: "#555566", width: 1 });
+        const background = new Graphics();
+        drawMenuPanelBackground(background, GAME_WIDTH, MENU_HEIGHT);
         const title = new Text({
-            text: "MENU",
+            text: "TIÊN LỘ · HỆ THỐNG",
             style: {
-                fill: "#ffffff",
-                fontSize: 22,
+                fill: MENU_COLORS.bronzeBright,
+                fontSize: MENU_FONT.title,
                 fontWeight: "bold",
             },
         });
@@ -416,11 +418,11 @@ export class BottomMenu {
         panel.visible = false;
 
         title.x = 20;
-        title.y = 18;
+        title.y = 14;
         tabNavigation.x = 20;
-        tabNavigation.y = 55;
+        tabNavigation.y = 45;
         this.tabContainer.x = 20;
-        this.tabContainer.y = 120;
+        this.tabContainer.y = MENU_LAYOUT.contentTop;
 
         TAB_LABELS.forEach(([tab, label], index) => {
             const button = this.createTabButton(label, tab);
@@ -446,8 +448,8 @@ export class BottomMenu {
         const text = new Text({
             text: label,
             style: {
-                fill: "#ffffff",
-                fontSize: 14,
+                fill: MENU_COLORS.text,
+                fontSize: MENU_FONT.tab,
                 fontWeight: "bold",
             },
         });
@@ -486,9 +488,8 @@ export class BottomMenu {
         this.tabContainer.removeChildren();
 
         this.characterProgressionPanel = null;
-        this.cultivationDetailsText = null;
-        this.cultivationProgressText = null;
-        this.cultivationStatusText = null;
+        this.cultivationPanel = null;
+        this.skillsPanel = null;
 
         if (this.activeTab === MenuTab.CHARACTER) {
             this.renderCharacterTab();
@@ -541,7 +542,7 @@ export class BottomMenu {
         }
 
         const content = new Text({
-            text: TAB_PLACEHOLDERS[this.activeTab],
+            text: TAB_TITLES[this.activeTab],
             style: {
                 fill: "#ffffff",
                 fontSize: 24,
@@ -554,89 +555,11 @@ export class BottomMenu {
 
     private renderSettingsTab(): void {
         this.tabContainer.removeChildren();
-
-        const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.SETTINGS],
-            0,
-            24,
+        const panel = new SettingsPanel(
+            this.saveManager,
+            this.onPersistentStateChanged,
         );
-        const lastSavedAt = this.saveManager.getLastSavedAt();
-        const info = this.createContentText(
-            [
-                `Save Version: ${CURRENT_SAVE_VERSION}`,
-                `Last Save: ${lastSavedAt
-                    ? new Date(lastSavedAt).toLocaleTimeString("vi-VN")
-                    : "Chưa có"}`,
-                this.saveStatusMessage,
-            ].filter(Boolean).join("\n"),
-            38,
-            15,
-        );
-        const saveButton = this.createMenuActionButton(
-            "LƯU GAME",
-            150,
-            34,
-            () => {
-                this.saveStatusMessage = this.saveManager.save()
-                    ? "Đã lưu game"
-                    : "Lưu game thất bại";
-                this.renderSettingsTab();
-            },
-        );
-        const loadButton = this.createMenuActionButton(
-            "TẢI GAME",
-            150,
-            34,
-            () => {
-                const result = this.saveManager.load();
-
-                this.saveStatusMessage = result.success
-                    ? `Đã tải save v${result.version}`
-                    : `Tải thất bại: ${result.reason ?? "Không rõ"}`;
-
-                if (result.success) {
-                    this.onPersistentStateChanged();
-                }
-
-                this.renderSettingsTab();
-            },
-        );
-        const deleteButton = this.createMenuActionButton(
-            "XÓA SAVE",
-            150,
-            34,
-            () => {
-                this.saveManager.deleteSave();
-                this.saveStatusMessage = "Đã xóa save; runtime được giữ nguyên";
-                this.renderSettingsTab();
-            },
-            "#fca5a5",
-        );
-        const resetButton = this.createMenuActionButton(
-            "RESET GAME",
-            150,
-            34,
-            () => {
-                this.saveManager.resetPersistentProgress();
-                this.onPersistentStateChanged();
-                this.saveStatusMessage = "Đã reset permanent progress";
-                this.renderSettingsTab();
-            },
-            "#fbbf24",
-        );
-
-        saveButton.position.set(0, 115);
-        loadButton.position.set(170, 115);
-        deleteButton.position.set(340, 115);
-        resetButton.position.set(510, 115);
-        this.tabContainer.addChild(
-            title,
-            info,
-            saveButton,
-            loadButton,
-            deleteButton,
-            resetButton,
-        );
+        this.tabContainer.addChild(panel.getView());
     }
 
     private renderCharacterTab(): void {
@@ -653,77 +576,11 @@ export class BottomMenu {
     }
 
     private renderCultivationTab(): void {
-        const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.CULTIVATION],
-            0,
-            24,
+        this.cultivationPanel = new CultivationPanel(
+            this.cultivationSystem,
+            this.breakthroughRewardSystem,
         );
-
-        this.cultivationDetailsText = this.createContentText("", 38, 17);
-        this.cultivationProgressText = this.createContentText("", 38, 17);
-        this.cultivationStatusText = this.createContentText("", 126, 14);
-        this.cultivationProgressText.x = 350;
-        this.cultivationStatusText.x = 350;
-        this.cultivationStatusText.style.fill = "#facc15";
-
-        this.tabContainer.addChild(
-            title,
-            this.cultivationDetailsText,
-            this.cultivationProgressText,
-            this.cultivationStatusText,
-        );
-
-        if (!this.cultivationSystem.isMaxCultivation()) {
-            const breakthroughButton = this.createMenuActionButton(
-                "ĐỘT PHÁ",
-                120,
-                30,
-                () => {
-                    if (this.cultivationSystem.breakthrough()) {
-                        this.breakthroughRewardSystem.reconcile(true);
-                        this.renderActiveTab();
-                    } else if (this.cultivationStatusText) {
-                        this.cultivationStatusText.text = "Chưa đủ Tu Vi";
-                    }
-                },
-                "#ffffff",
-                13,
-            );
-
-            breakthroughButton.position.set(350, 88);
-            this.tabContainer.addChild(breakthroughButton);
-        }
-
-        this.updateCultivationTexts();
-    }
-
-    private updateCultivationTexts(): void {
-        if (
-            !this.cultivationDetailsText ||
-            !this.cultivationProgressText ||
-            !this.cultivationStatusText
-        ) {
-            return;
-        }
-
-        this.cultivationDetailsText.text = [
-            `Cảnh giới: ${CULTIVATION_REALM_LABELS[this.cultivationSystem.getRealm()]}`,
-            `Giai đoạn: ${CULTIVATION_STAGE_LABELS[this.cultivationSystem.getStage()]}`,
-            `Tầng: ${this.cultivationSystem.getLayer()} / ${CULTIVATION_LAYERS_PER_STAGE}`,
-        ].join("\n");
-        this.cultivationProgressText.text = [
-            `Tu Vi: ${this.formatNumber(this.cultivationSystem.getCultivation())} / ${this.formatNumber(this.cultivationSystem.getRequiredCultivation())}`,
-            `Tốc độ tu luyện: ${this.formatNumber(this.cultivationSystem.getCultivationPerSecond())} / giây`,
-            `Ô kỹ năng: ${this.breakthroughRewardSystem.getSkillSlotCount()} / 5`,
-            `Ô công pháp: ${this.breakthroughRewardSystem.getTechniqueSlotCount()}`,
-            `Ô pháp bảo: ${this.breakthroughRewardSystem.getArtifactSlotCount()}`,
-            `Nội tại: ${this.breakthroughRewardSystem.getUnlockedPassives().join(", ") || "Chưa mở"}`,
-            this.breakthroughRewardSystem.getNextRewardSummary(),
-        ].join("\n");
-
-        if (this.cultivationSystem.isMaxCultivation()) {
-            this.cultivationStatusText.text = "Đã đạt cảnh giới tối đa";
-        }
+        this.tabContainer.addChild(this.cultivationPanel.getView());
     }
 
     private createContentText(
@@ -734,7 +591,7 @@ export class BottomMenu {
         const text = new Text({
             text: value,
             style: {
-                fill: "#ffffff",
+                fill: MENU_COLORS.text,
                 fontSize,
                 fontWeight: "bold",
             },
@@ -746,146 +603,19 @@ export class BottomMenu {
     }
 
     private renderSkillTab(): void {
-        this.tabContainer.removeChildren();
-
-        const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.SKILLS],
-            0,
-            24,
+        this.skillsPanel = new SkillsPanel(
+            this.skillManager,
+            this.getSpiritStone,
+            this.spendSpiritStone,
         );
-
-        const status = this.createContentText(
-            `${this.skillStatusMessage || "Bấm ô 2–5 để đổi skill trong build."}   Linh Thạch: ${this.getSpiritStone()}`,
-            5,
-            12,
-        );
-        status.x = 145;
-        status.style.fill = "#facc15";
-        this.tabContainer.addChild(title, status);
-
-        for (let slotIndex = 0; slotIndex < 5; slotIndex += 1) {
-            const unlocked = slotIndex < this.skillManager.getUnlockedSlotCount();
-            const skillId = this.skillManager.getEquippedSkillId(slotIndex);
-            const skillName = skillId
-                ? this.skillManager.getSkillDefinition(skillId)?.name ?? "?"
-                : "TRỐNG";
-            const button = this.createMenuActionButton(
-                unlocked ? `${slotIndex + 1}. ${skillName}` : `${slotIndex + 1}. KHÓA`,
-                200,
-                24,
-                () => {
-                    if (unlocked && slotIndex > 0) {
-                        this.cycleSkillSlot(slotIndex);
-                    }
-                },
-                unlocked ? (slotIndex === 0 ? "#d4d4d8" : "#86efac") : "#71717a",
-                10,
-            );
-            button.position.set(slotIndex * 206, 31);
-            this.tabContainer.addChild(button);
-        }
-
-        this.skillManager.getAllSkills().forEach(({ definition, state }, index) => {
-            this.renderSkillCard(definition, state, index);
-        });
-    }
-
-    private renderSkillCard(
-        definition: SkillDefinition,
-        state: SkillState,
-        index: number,
-    ): void {
-        const column = index % 4;
-        const row = Math.floor(index / 4);
-        const x = column * 305;
-        const y = 63 + row * 82;
-        const equippedSlot = this.skillManager.getLoadout().findIndex(
-            (skillId) => skillId === definition.id,
-        );
-        const maxLevel = definition.progression.maxLevel;
-        const upgradeCost = this.skillManager.getUpgradeCost(definition.id);
-        const power = definition.damageMultiplier !== undefined
-            ? `ST ${this.formatNumber(this.skillManager.getEffectiveDamageMultiplier(definition.id) * 100)}%`
-            : `Hồi ${this.formatNumber(this.skillManager.getEffectiveHealPercent(definition.id) * 100)}%`;
-        const nameText = this.createContentText(
-            `${state.unlocked ? "" : "🔒 "}${definition.name}${equippedSlot >= 0 ? ` [Ô ${equippedSlot + 1}]` : ""}`,
-            y,
-            14,
-        );
-        const detailsText = this.createContentText(
-            `Lv ${state.level}/${maxLevel} · ${power} · MP ${this.formatNumber(this.skillManager.getEffectiveMpCost(definition.id))} · CD ${this.formatNumber(this.skillManager.getEffectiveCooldown(definition.id))}s`,
-            y + 21,
-            10,
-        );
-
-        nameText.x = x;
-        detailsText.x = x;
-        if (!state.unlocked) {
-            nameText.style.fill = "#71717a";
-            detailsText.style.fill = "#71717a";
-            this.tabContainer.addChild(nameText, detailsText);
-            return;
-        }
-
-        const upgradeButton = this.createMenuActionButton(
-            upgradeCost === null ? "MAX" : `NÂNG ${upgradeCost}`,
-            112,
-            22,
-            () => {
-                if (upgradeCost === null) return;
-                const upgraded = this.skillManager.upgradeSkill(
-                    definition.id,
-                    this.spendSpiritStone,
-                );
-                this.skillStatusMessage = upgraded
-                    ? `${definition.name} đã lên cấp ${state.level + 1}.`
-                    : `Không đủ Linh Thạch để nâng ${definition.name}.`;
-                this.renderSkillTab();
-            },
-            upgradeCost === null ? "#a1a1aa" : "#fde68a",
-            10,
-        );
-        const autoButton = this.createMenuActionButton(
-            `AUTO ${state.autoCastEnabled ? "ON" : "OFF"}`,
-            82,
-            22,
-            () => {
-                this.skillManager.setAutoCast(definition.id, !state.autoCastEnabled);
-                this.renderSkillTab();
-            },
-            state.autoCastEnabled ? "#86efac" : "#fca5a5",
-            10,
-        );
-        upgradeButton.position.set(x, y + 43);
-        autoButton.position.set(x + 118, y + 43);
-        this.tabContainer.addChild(nameText, detailsText, upgradeButton, autoButton);
-    }
-
-    private cycleSkillSlot(slotIndex: number): void {
-        const basicSkillId = this.skillManager.getEquippedSkillId(0);
-        const candidates = this.skillManager.getAllSkills()
-            .filter(({ definition, state }) => state.unlocked && definition.id !== basicSkillId)
-            .map(({ definition }) => definition.id);
-        if (candidates.length === 0) return;
-
-        const current = this.skillManager.getEquippedSkillId(slotIndex);
-        const currentIndex = current ? candidates.indexOf(current) : -1;
-        for (let offset = 1; offset <= candidates.length; offset += 1) {
-            const candidate = candidates[(currentIndex + offset) % candidates.length];
-            if (this.skillManager.equipSkill(candidate, slotIndex)) {
-                const name = this.skillManager.getSkillDefinition(candidate)?.name ?? candidate;
-                this.skillStatusMessage = `Đã gắn ${name} vào ô ${slotIndex + 1}.`;
-                this.renderSkillTab();
-                return;
-            }
-        }
+        this.tabContainer.addChild(this.skillsPanel.getView());
     }
 
     private renderRefiningTab(): void {
         this.tabContainer.removeChildren();
 
         const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.REFINING],
+            TAB_TITLES[MenuTab.REFINING],
             0,
             24,
         );
@@ -899,6 +629,16 @@ export class BottomMenu {
     }
 
     private renderRefiningRecipe(recipeId: string, x: number): void {
+        this.tabContainer.addChild(
+            this.createAssetFrame(
+                MENU_ASSETS.inventory.detailPanes[2],
+                x - 8,
+                25,
+                392,
+                178,
+                0.72,
+            ),
+        );
         const availableCatalysts = this.craftingManager
             .getCompatibleCatalysts(recipeId, true);
         let selectedCatalystId = this.selectedRefiningCatalysts.get(recipeId);
@@ -1084,7 +824,7 @@ export class BottomMenu {
     private renderAlchemyTab(): void {
         this.tabContainer.removeChildren();
         this.tabContainer.addChild(
-            this.createContentText(TAB_PLACEHOLDERS[MenuTab.ALCHEMY], 0, 24),
+            this.createContentText(TAB_TITLES[MenuTab.ALCHEMY], 0, 24),
         );
         this.renderLastPillCraftResult();
         this.renderActivePillBuff();
@@ -1095,6 +835,16 @@ export class BottomMenu {
     }
 
     private renderAlchemyRecipe(recipeId: string, x: number): void {
+        this.tabContainer.addChild(
+            this.createAssetFrame(
+                MENU_ASSETS.inventory.detailPanes[3],
+                x - 8,
+                25,
+                392,
+                178,
+                0.72,
+            ),
+        );
         const catalysts = this.craftingManager.getCompatibleCatalysts(recipeId, true);
         let selectedId = this.selectedAlchemyCatalysts.get(recipeId);
 
@@ -1281,7 +1031,7 @@ export class BottomMenu {
         this.tabContainer.removeChildren();
 
         const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.EQUIPMENT],
+            TAB_TITLES[MenuTab.EQUIPMENT],
             0,
             24,
         );
@@ -1301,8 +1051,15 @@ export class BottomMenu {
         statusText.style.fill = "#fca5a5";
         this.tabContainer.addChild(title, realmText, statusText);
 
+        this.renderEquipmentPaperDoll();
+        const slotPositions = [
+            { x: 0, y: 44 },
+            { x: 420, y: 44 },
+            { x: 420, y: 142 },
+        ] as const;
         EQUIPMENT_SLOTS.forEach((slot, index) => {
-            this.renderEquipmentSlot(slot, index * 210);
+            const position = slotPositions[index];
+            this.renderEquipmentSlot(slot, position.x, position.y);
         });
 
         const selectedEquipment = this.selectedRerollInstanceId
@@ -1315,7 +1072,6 @@ export class BottomMenu {
             this.selectedRerollInstanceId = null;
             this.pendingRerollInstanceId = null;
             this.renderOwnedEquipment();
-            this.renderDebugRealmButtons();
         }
         this.renderedEquipmentVersion = this.equipmentManager.getVersion();
         this.renderedEquipmentInventoryVersion = this.inventory.getVersion();
@@ -1324,11 +1080,22 @@ export class BottomMenu {
     private renderEquipmentSlot(
         slot: EquipmentSlot,
         x: number,
+        y: number,
     ): void {
+        this.tabContainer.addChild(
+            this.createAssetFrame(
+                MENU_ASSETS.inventory.detailPanes[1],
+                x - 6,
+                y - 6,
+                194,
+                92,
+                0.78,
+            ),
+        );
         const slotLabel = this.createContentText(
             `${EQUIPMENT_SLOT_LABELS[slot]}:`,
-            34,
-            15,
+            y,
+            12,
         );
         const equipment = this.equipmentManager.getEquippedItem(slot);
 
@@ -1336,7 +1103,7 @@ export class BottomMenu {
         this.tabContainer.addChild(slotLabel);
 
         if (!equipment) {
-            const emptyText = this.createContentText("Trống", 56, 14);
+            const emptyText = this.createContentText("Trống", y + 25, 12);
 
             emptyText.x = x;
             emptyText.style.fill = "#aaaabb";
@@ -1345,25 +1112,27 @@ export class BottomMenu {
         }
 
         const definition = equipment.definition;
-        const nameText = this.createContentText(definition.name, 55, 14);
+        const nameText = this.createContentText(definition.name, y + 20, 11);
         const requirementText = this.createContentText(
             `${EQUIPMENT_RARITY_LABELS[equipment.rarity]} | ` +
             `Dòng: ${equipment.rolledStats.length} / ${CURRENT_MAX_STAT_LINE_COUNT} | ` +
             `Yêu cầu: ${CULTIVATION_REALM_LABELS[definition.requiredRealm]}`,
-            75,
-            11,
+            y + 36,
+            9,
         );
         const modifierText = this.createContentText(
             equipment.rolledStats.map((modifier) =>
                 this.formatStatModifier(modifier),
-            ).join("\n"),
-            92,
-            11,
+            ).join(" · "),
+            y + 51,
+            9,
         );
+        modifierText.style.wordWrap = true;
+        modifierText.style.wordWrapWidth = 180;
         const unequipButton = this.createMenuActionButton(
             "Tháo",
-            80,
-            26,
+            54,
+            20,
             () => {
                 if (this.equipmentManager.unequip(slot)) {
                     this.equipmentStatusMessage =
@@ -1379,7 +1148,7 @@ export class BottomMenu {
         requirementText.x = x;
         requirementText.style.fill = "#aaaabb";
         modifierText.x = x;
-        unequipButton.position.set(x, 142);
+        unequipButton.position.set(x, y + 70);
 
         this.tabContainer.addChild(
             nameText,
@@ -1387,18 +1156,40 @@ export class BottomMenu {
             modifierText,
             unequipButton,
         );
-        this.renderStatUnlockAction(equipment, x + 90, 142);
+        this.renderStatUnlockAction(equipment, x + 60, y + 70);
         const rerollButton = this.createMenuActionButton(
             "TẨY",
             44,
-            24,
+            20,
             () => this.openRerollDetail(equipment.instanceId),
             "#c4b5fd",
             9,
         );
 
-        rerollButton.position.set(x + 170, 142);
+        rerollButton.position.set(x + 136, y + 70);
         this.tabContainer.addChild(rerollButton);
+    }
+
+    private renderEquipmentPaperDoll(): void {
+        const frame = this.createAssetFrame(
+            MENU_ASSETS.inventory.rarityFrame,
+            208,
+            42,
+            188,
+            188,
+            0.88,
+        );
+        const portraitTexture = Assets.get<Texture>(UI_ASSETS.playerPortrait);
+        const portrait = new Sprite(portraitTexture ?? Texture.EMPTY);
+        portrait.anchor.set(0.5);
+        portrait.position.set(302, 140);
+        portrait.scale.set(3.8);
+        portrait.roundPixels = true;
+
+        const label = this.createContentText("PAPER DOLL", 210, 10);
+        label.x = 270;
+        label.style.fill = MENU_COLORS.jadeBright;
+        this.tabContainer.addChild(frame, portrait, label);
     }
 
     private renderOwnedEquipment(): void {
@@ -1408,11 +1199,21 @@ export class BottomMenu {
             15,
         );
         const ownedEquipment = this.inventory.getEquipmentInstances();
+        const pageCount = Math.max(
+            1,
+            Math.ceil(ownedEquipment.length / EQUIPMENT_PAGE_SIZE),
+        );
+        this.equipmentPage = Math.min(this.equipmentPage, pageCount - 1);
+        const pageStart = this.equipmentPage * EQUIPMENT_PAGE_SIZE;
+        const visibleEquipment = ownedEquipment.slice(
+            pageStart,
+            pageStart + EQUIPMENT_PAGE_SIZE,
+        );
 
         ownedTitle.x = 650;
         this.tabContainer.addChild(ownedTitle);
 
-        ownedEquipment.forEach((equipment, index) => {
+        visibleEquipment.forEach((equipment, index) => {
             const column = index % 3;
             const row = Math.floor(index / 3);
             const equippedLabel = this.equipmentManager.isEquipped(
@@ -1424,11 +1225,18 @@ export class BottomMenu {
             const stats = equipment.rolledStats
                 .map((modifier) => this.formatStatModifier(modifier))
                 .join(", ");
+            const comparison = this.equipmentComparisonService.compare(
+                this.player,
+                this.equipmentManager,
+                equipment,
+            );
+            const comparisonSummary = this.formatEquipmentComparisonSummary(comparison);
             const button = this.createMenuActionButton(
                 `${equipment.definition.name} #${shortId}${equippedLabel} ` +
-                `[${equipment.rolledStats.length}/${CURRENT_MAX_STAT_LINE_COUNT}]\n${stats}`,
+                `[${equipment.rolledStats.length}/${CURRENT_MAX_STAT_LINE_COUNT}]\n` +
+                `${stats}\n${comparisonSummary}`,
                 110,
-                32,
+                44,
                 () => {
                     this.attemptEquip(equipment);
                 },
@@ -1438,13 +1246,13 @@ export class BottomMenu {
 
             button.position.set(
                 650 + column * 195,
-                28 + row * 64,
+                28 + row * 76,
             );
             this.tabContainer.addChild(button);
             this.renderStatUnlockAction(
                 equipment,
                 765 + column * 195,
-                28 + row * 64,
+                28 + row * 76,
             );
             const rerollButton = this.createMenuActionButton(
                 "TẨY",
@@ -1457,10 +1265,58 @@ export class BottomMenu {
 
             rerollButton.position.set(
                 765 + column * 195,
-                54 + row * 64,
+                54 + row * 76,
             );
             this.tabContainer.addChild(rerollButton);
         });
+
+        this.renderEquipmentPagination(pageCount);
+    }
+
+    private renderEquipmentPagination(pageCount: number): void {
+        if (pageCount <= 1) return;
+
+        const previous = this.createMenuActionButton(
+            "‹",
+            34,
+            22,
+            () => {
+                this.equipmentPage = Math.max(0, this.equipmentPage - 1);
+                this.renderEquipmentTab();
+            },
+            this.equipmentPage > 0 ? "#f4dfaa" : "#5c655f",
+            11,
+        );
+        const next = this.createMenuActionButton(
+            "›",
+            34,
+            22,
+            () => {
+                this.equipmentPage = Math.min(pageCount - 1, this.equipmentPage + 1);
+                this.renderEquipmentTab();
+            },
+            this.equipmentPage < pageCount - 1 ? "#f4dfaa" : "#5c655f",
+            11,
+        );
+        const label = this.createContentText(
+            `${this.equipmentPage + 1}/${pageCount}`,
+            190,
+            10,
+        );
+
+        if (this.equipmentPage <= 0) {
+            previous.eventMode = "none";
+            previous.alpha = 0.45;
+        }
+        if (this.equipmentPage >= pageCount - 1) {
+            next.eventMode = "none";
+            next.alpha = 0.45;
+        }
+
+        previous.position.set(1040, 185);
+        label.x = 1082;
+        next.position.set(1120, 185);
+        this.tabContainer.addChild(previous, label, next);
     }
 
     private openRerollDetail(instanceId: string): void {
@@ -1495,6 +1351,23 @@ export class BottomMenu {
         title.x = 650;
         closeButton.position.set(1195, 0);
         this.tabContainer.addChild(title, closeButton);
+
+        const comparison = this.equipmentComparisonService.compare(
+            this.player,
+            this.equipmentManager,
+            equipment,
+        );
+        const affixPoolText = this.createContentText(
+            `Pool: ${comparison.affixPool.map((stat) => STAT_LABELS[stat]).join(" / ")} | ` +
+            `Roll: ${Math.round(comparison.averageRollQuality * 100)}% | ` +
+            this.formatEquipmentComparisonSummary(comparison),
+            20,
+            9,
+        );
+
+        affixPoolText.x = 650;
+        affixPoolText.style.fill = this.getEquipmentComparisonColor(comparison);
+        this.tabContainer.addChild(affixPoolText);
 
         equipment.rolledStats.forEach((modifier, index) => {
             const locked = equipment.lockedStatIndices.includes(index);
@@ -1667,51 +1540,17 @@ export class BottomMenu {
         return "Cấu hình thuộc tính trang bị không hợp lệ.";
     }
 
-    private renderDebugRealmButtons(): void {
-        const qiRefiningButton = this.createMenuActionButton(
-            "Debug: Luyện Khí",
-            160,
-            26,
-            () => {
-                this.cultivationSystem.setProgressForDebug(
-                    CultivationRealm.QI_REFINING,
-                    CultivationStage.EARLY,
-                    1,
-                );
-                this.breakthroughRewardSystem.reconcile(true);
-                this.equipmentStatusMessage = "Đã đặt cảnh giới: Luyện Khí";
-                this.renderEquipmentTab();
-            },
-            "#ffffff",
-            12,
-        );
-        const foundationButton = this.createMenuActionButton(
-            "Debug: Trúc Cơ",
-            160,
-            26,
-            () => {
-                this.cultivationSystem.setProgressForDebug(
-                    CultivationRealm.FOUNDATION_ESTABLISHMENT,
-                    CultivationStage.EARLY,
-                    1,
-                );
-                this.breakthroughRewardSystem.reconcile(true);
-                this.equipmentStatusMessage = "Đã đặt cảnh giới: Trúc Cơ";
-                this.renderEquipmentTab();
-            },
-            "#ffffff",
-            12,
-        );
-
-        qiRefiningButton.position.set(650, 142);
-        foundationButton.position.set(820, 142);
-        this.tabContainer.addChild(qiRefiningButton, foundationButton);
-    }
-
     private attemptEquip(equipment: EquipmentInstance): void {
+        const comparison = this.equipmentComparisonService.compare(
+            this.player,
+            this.equipmentManager,
+            equipment,
+        );
+
         if (this.equipmentManager.equip(equipment)) {
             this.equipmentStatusMessage =
-                `Đã trang bị ${equipment.definition.name}`;
+                `Đã trang bị ${equipment.definition.name} | ` +
+                this.formatEquipmentComparisonSummary(comparison);
         } else {
             this.equipmentStatusMessage =
                 `Yêu cầu cảnh giới: ${CULTIVATION_REALM_LABELS[equipment.definition.requiredRealm]}`;
@@ -1883,11 +1722,58 @@ export class BottomMenu {
         return `${STAT_LABELS[modifier.stat]} +${value}${suffix}`;
     }
 
+    private formatEquipmentComparisonSummary(
+        comparison: EquipmentComparison,
+    ): string {
+        const gradeLabel: Readonly<Record<EquipmentComparison["grade"], string>> = {
+            upgrade: "NÂNG CẤP",
+            sidegrade: "ĐỔI BUILD",
+            downgrade: "GIẢM SỨC MẠNH",
+            equipped: "ĐANG DÙNG",
+        };
+        const dpsDelta = comparison.dpsDeltaPercent * 100;
+        const dpsText = comparison.grade === "equipped"
+            ? `DPS ${this.formatNumber(comparison.projectedEstimatedDps)}`
+            : `DPS ${dpsDelta >= 0 ? "+" : ""}${dpsDelta.toFixed(1)}%`;
+        const importantDeltas = comparison.statDeltas
+            .filter((entry) => Math.abs(entry.delta) > 0.000001)
+            .sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta))
+            .slice(0, 2)
+            .map((entry) => {
+                const percent = RATIO_STATS.has(entry.stat);
+                const value = percent
+                    ? `${entry.delta >= 0 ? "+" : ""}${(entry.delta * 100).toFixed(1)}%`
+                    : `${entry.delta >= 0 ? "+" : ""}${this.formatNumber(entry.delta)}`;
+                return `${STAT_LABELS[entry.stat]} ${value}`;
+            })
+            .join(" | ");
+        const tags = comparison.buildTags.length > 0
+            ? comparison.buildTags.join("/")
+            : "Thuần stat";
+
+        return `${gradeLabel[comparison.grade]} | ${dpsText}` +
+            `${importantDeltas ? ` | ${importantDeltas}` : ""}` +
+            ` | ${tags} | Roll ${Math.round(comparison.averageRollQuality * 100)}%`;
+    }
+
+    private getEquipmentComparisonColor(comparison: EquipmentComparison): string {
+        if (comparison.grade === "upgrade") {
+            return "#86efac";
+        }
+        if (comparison.grade === "downgrade") {
+            return "#fca5a5";
+        }
+        if (comparison.grade === "sidegrade") {
+            return "#fde68a";
+        }
+        return "#93c5fd";
+    }
+
     private renderTechniqueTab(): void {
         this.tabContainer.removeChildren();
 
         const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.TECHNIQUES],
+            TAB_TITLES[MenuTab.TECHNIQUES],
             0,
             24,
         );
@@ -1905,6 +1791,16 @@ export class BottomMenu {
             .getAllTechniques()
             .forEach(({ definition, state }, index) => {
                 const x = index * 400;
+                this.tabContainer.addChild(
+                    this.createAssetFrame(
+                        MENU_ASSETS.inventory.detailPanes[index % MENU_ASSETS.inventory.detailPanes.length],
+                        x - 8,
+                        27,
+                        382,
+                        166,
+                        state.learned ? 0.76 : 0.52,
+                    ),
+                );
                 const nameText = this.createContentText(
                     definition.name,
                     36,
@@ -2013,7 +1909,7 @@ export class BottomMenu {
         this.tabContainer.removeChildren();
 
         const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.ARTIFACTS],
+            TAB_TITLES[MenuTab.ARTIFACTS],
             0,
             24,
         );
@@ -2034,6 +1930,16 @@ export class BottomMenu {
                     definition.id,
                 );
                 const x = index * 400;
+                this.tabContainer.addChild(
+                    this.createAssetFrame(
+                        MENU_ASSETS.inventory.detailPanes[index % MENU_ASSETS.inventory.detailPanes.length],
+                        x - 8,
+                        27,
+                        382,
+                        166,
+                        state.equipped ? 0.86 : 0.72,
+                    ),
+                );
                 const nameText = this.createContentText(
                     definition.name,
                     36,
@@ -2088,22 +1994,6 @@ export class BottomMenu {
         equipped: boolean,
         x: number,
     ): void {
-        const debugButton = this.createMenuActionButton(
-            "+10 Mảnh",
-            105,
-            28,
-            () => {
-                this.artifactManager.addFragments(artifactId, 10);
-                this.artifactStatusMessage = "Đã thêm 10 mảnh debug";
-                this.renderArtifactTab();
-            },
-            "#ffffff",
-            12,
-        );
-
-        debugButton.position.set(x, 142);
-        this.tabContainer.addChild(debugButton);
-
         if (!owned) {
             if (this.artifactManager.canCraft(artifactId)) {
                 const craftButton = this.createMenuActionButton(
@@ -2168,13 +2058,19 @@ export class BottomMenu {
         this.tabContainer.removeChildren();
 
         const title = this.createContentText(
-            TAB_PLACEHOLDERS[MenuTab.INVENTORY],
+            TAB_TITLES[MenuTab.INVENTORY],
             0,
             24,
         );
         const inventoryItems = this.inventory.getItems();
         const pillStacks = this.inventory.getPillStacks();
         const equipmentInstances = this.inventory.getEquipmentInstances();
+        const totalEntries =
+            inventoryItems.length + pillStacks.length + equipmentInstances.length;
+        const pageCount = Math.max(1, Math.ceil(totalEntries / INVENTORY_PAGE_SIZE));
+        this.inventoryPage = Math.min(this.inventoryPage, pageCount - 1);
+        const pageStart = this.inventoryPage * INVENTORY_PAGE_SIZE;
+        const pageEnd = pageStart + INVENTORY_PAGE_SIZE;
         let displayIndex = 0;
         const statusText = this.createContentText(
             this.inventoryStatusMessage,
@@ -2196,7 +2092,20 @@ export class BottomMenu {
             );
         } else {
             inventoryItems.forEach((inventoryItem) => {
-                const { x, y } = this.getInventoryCellPosition(displayIndex);
+                const entryIndex = displayIndex;
+                displayIndex += 1;
+                if (entryIndex < pageStart || entryIndex >= pageEnd) return;
+                const { x, y } = this.getInventoryCellPosition(entryIndex - pageStart);
+                this.tabContainer.addChild(
+                    this.createAssetFrame(
+                        MENU_ASSETS.inventory.detailPanes[entryIndex % MENU_ASSETS.inventory.detailPanes.length],
+                        x - 8,
+                        y - 8,
+                        286,
+                        70,
+                        0.72,
+                    ),
+                );
                 const nameText = this.createContentText(
                     `${inventoryItem.item.name} x${inventoryItem.quantity}`,
                     y,
@@ -2228,10 +2137,11 @@ export class BottomMenu {
                     this.tabContainer.addChild(catalystText);
                 }
 
-                displayIndex += 1;
             });
 
             pillStacks.forEach((stack) => {
+                const entryIndex = displayIndex;
+                displayIndex += 1;
                 const definition = this.alchemyManager.getPillDefinition(
                     stack.definitionId,
                 );
@@ -2244,7 +2154,19 @@ export class BottomMenu {
                     return;
                 }
 
-                const { x, y } = this.getInventoryCellPosition(displayIndex);
+                if (entryIndex < pageStart || entryIndex >= pageEnd) return;
+
+                const { x, y } = this.getInventoryCellPosition(entryIndex - pageStart);
+                this.tabContainer.addChild(
+                    this.createAssetFrame(
+                        MENU_ASSETS.inventory.detailPanes[entryIndex % MENU_ASSETS.inventory.detailPanes.length],
+                        x - 8,
+                        y - 8,
+                        286,
+                        70,
+                        0.72,
+                    ),
+                );
                 const nameText = this.createContentText(
                     `${definition.name} [${EQUIPMENT_RARITY_LABELS[stack.rarity]}] x${stack.quantity}`,
                     y,
@@ -2275,11 +2197,23 @@ export class BottomMenu {
                 effectText.x = x;
                 useButton.position.set(x + 210, y + 8);
                 this.tabContainer.addChild(nameText, effectText, useButton);
-                displayIndex += 1;
             });
 
             equipmentInstances.forEach((equipment) => {
-                const { x, y } = this.getInventoryCellPosition(displayIndex);
+                const entryIndex = displayIndex;
+                displayIndex += 1;
+                if (entryIndex < pageStart || entryIndex >= pageEnd) return;
+                const { x, y } = this.getInventoryCellPosition(entryIndex - pageStart);
+                this.tabContainer.addChild(
+                    this.createAssetFrame(
+                        MENU_ASSETS.inventory.detailPanes[entryIndex % MENU_ASSETS.inventory.detailPanes.length],
+                        x - 8,
+                        y - 8,
+                        286,
+                        70,
+                        0.72,
+                    ),
+                );
                 const definition = equipment.definition;
                 const equippedLabel = this.equipmentManager.isEquipped(
                     equipment.instanceId,
@@ -2319,26 +2253,10 @@ export class BottomMenu {
                 );
 
                 this.renderInventoryEquipmentActions(equipment, x, y);
-                displayIndex += 1;
             });
+
+            this.renderInventoryPagination(pageCount);
         }
-
-        const addButton = this.createInventoryDebugButton(
-            "+ Linh Thảo",
-            () => {
-                this.inventory.addItem(ITEM_DATA.SPIRIT_HERB);
-            },
-        );
-        const removeButton = this.createInventoryDebugButton(
-            "- Linh Thảo",
-            () => {
-                this.inventory.removeItem(ITEM_DATA.SPIRIT_HERB.id);
-            },
-        );
-
-        addButton.position.set(940, 0);
-        removeButton.position.set(1090, 0);
-        this.tabContainer.addChild(addButton, removeButton);
 
         this.renderedInventoryVersion = this.inventory.getVersion();
     }
@@ -2349,6 +2267,11 @@ export class BottomMenu {
         y: number,
     ): void {
         const equipped = this.equipmentManager.isEquipped(equipment.instanceId);
+        const comparison = this.equipmentComparisonService.compare(
+            this.player,
+            this.equipmentManager,
+            equipment,
+        );
 
         if (this.pendingStatUnlockInstanceId === equipment.instanceId) {
             this.renderStatUnlockAction(equipment, x, y + 42);
@@ -2420,7 +2343,8 @@ export class BottomMenu {
             () => {
                 if (this.equipmentManager.equip(equipment)) {
                     this.inventoryStatusMessage =
-                        `Đã trang bị ${equipment.definition.name}`;
+                        `Đã trang bị ${equipment.definition.name} | ` +
+                        this.formatEquipmentComparisonSummary(comparison);
                 } else {
                     this.inventoryStatusMessage =
                         `Yêu cầu cảnh giới: ` +
@@ -2450,6 +2374,7 @@ export class BottomMenu {
     private beginEquipmentSalvage(instanceId: string): void {
         const check = this.equipmentSalvageManager.canSalvage(instanceId);
         const preview = this.equipmentSalvageManager.getSalvagePreview(instanceId);
+        const equipment = this.inventory.getEquipmentInstance(instanceId);
 
         if (!check.success || !preview) {
             this.inventoryStatusMessage = this.getSalvageFailureMessage(
@@ -2462,10 +2387,20 @@ export class BottomMenu {
 
         this.pendingSalvageInstanceId = instanceId;
         this.pendingStatUnlockInstanceId = null;
+        const comparison = equipment
+            ? this.equipmentComparisonService.compare(
+                this.player,
+                this.equipmentManager,
+                equipment,
+            )
+            : null;
         this.inventoryStatusMessage =
             `Tháo rã ${preview.equipmentName} ` +
             `[${EQUIPMENT_RARITY_LABELS[preview.rarity]}]? ` +
-            `Nhận ${preview.essenceName} x${preview.essenceQuantity}`;
+            `Nhận ${preview.essenceName} x${preview.essenceQuantity}` +
+            (comparison
+                ? ` | ${this.formatEquipmentComparisonSummary(comparison)}`
+                : "");
         this.renderInventoryTab();
     }
 
@@ -2515,20 +2450,73 @@ export class BottomMenu {
     } {
         return {
             x: (index % 4) * 300,
-            y: 32 + Math.floor(index / 4) * 64,
+            y: 34 + Math.floor(index / 4) * 72,
         };
     }
 
-    private createInventoryDebugButton(
-        label: string,
-        action: () => void,
-    ): Container {
-        return this.createMenuActionButton(
-            label,
-            140,
-            34,
-            action,
+    private renderInventoryPagination(pageCount: number): void {
+        if (pageCount <= 1) return;
+
+        const previous = this.createMenuActionButton(
+            "‹ TRƯỚC",
+            92,
+            22,
+            () => {
+                this.inventoryPage = Math.max(0, this.inventoryPage - 1);
+                this.renderInventoryTab();
+            },
+            this.inventoryPage > 0 ? "#f4dfaa" : "#5c655f",
+            10,
         );
+        const next = this.createMenuActionButton(
+            "SAU ›",
+            92,
+            22,
+            () => {
+                this.inventoryPage = Math.min(pageCount - 1, this.inventoryPage + 1);
+                this.renderInventoryTab();
+            },
+            this.inventoryPage < pageCount - 1 ? "#f4dfaa" : "#5c655f",
+            10,
+        );
+        const pageText = this.createContentText(
+            `Trang ${this.inventoryPage + 1} / ${pageCount}`,
+            209,
+            10,
+        );
+
+        if (this.inventoryPage <= 0) {
+            previous.eventMode = "none";
+            previous.alpha = 0.45;
+        }
+        if (this.inventoryPage >= pageCount - 1) {
+            next.eventMode = "none";
+            next.alpha = 0.45;
+        }
+
+        previous.position.set(470, 204);
+        pageText.x = 578;
+        next.position.set(655, 204);
+        this.tabContainer.addChild(previous, pageText, next);
+    }
+
+    private createAssetFrame(
+        asset: string,
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        alpha = 1,
+    ): Sprite {
+        const texture = Assets.get<Texture>(asset) ?? Texture.EMPTY;
+        texture.source.scaleMode = "nearest";
+        const sprite = new Sprite(texture);
+        sprite.position.set(Math.round(x), Math.round(y));
+        sprite.width = Math.round(width);
+        sprite.height = Math.round(height);
+        sprite.alpha = alpha;
+        sprite.roundPixels = true;
+        return sprite;
     }
 
     private createMenuActionButton(
@@ -2539,29 +2527,15 @@ export class BottomMenu {
         textColor = "#ffffff",
         fontSize = 14,
     ): Container {
-        const button = new Container();
-        const background = new Graphics()
-            .roundRect(0, 0, width, height, 4)
-            .fill({ color: "#3c3c4d" })
-            .stroke({ color: "#77778c", width: 1 });
-        const text = new Text({
-            text: label,
-            style: {
-                fill: textColor,
-                fontSize,
-                fontWeight: "bold",
-            },
-        });
-
-        button.eventMode = "static";
-        button.cursor = "pointer";
-        text.anchor.set(0.5);
-        text.position.set(width / 2, height / 2);
-
-        button.addChild(background, text);
-        button.on("pointertap", action);
-
-        return button;
+        const parsedColor = Number.parseInt(textColor.replace("#", ""), 16);
+        return createThemedMenuActionButton(
+            label,
+            width,
+            height,
+            action,
+            Number.isFinite(parsedColor) ? parsedColor : MENU_COLORS.text,
+            fontSize,
+        );
     }
 
     private update(deltaMS: number): void {
@@ -2594,7 +2568,7 @@ export class BottomMenu {
 
             if (this.refreshTimer >= CHARACTER_REFRESH_INTERVAL) {
                 this.refreshTimer = 0;
-                this.renderSkillTab();
+                this.skillsPanel?.refresh();
             }
 
             return;
@@ -2639,7 +2613,7 @@ export class BottomMenu {
         if (this.activeTab === MenuTab.CHARACTER) {
             this.characterProgressionPanel?.refresh();
         } else {
-            this.updateCultivationTexts();
+            this.cultivationPanel?.refresh();
         }
     }
 
@@ -2703,35 +2677,32 @@ export class BottomMenu {
             .clear()
             .roundRect(0, 0, TAB_BUTTON_WIDTH, TAB_BUTTON_HEIGHT, 4)
             .fill({
-                color: active ? TAB_ACTIVE_COLOR : TAB_NORMAL_COLOR,
+                color: active ? MENU_COLORS.panelAlt : MENU_COLORS.panel,
             })
             .stroke({
-                color: active ? "#9999cc" : "#555566",
-                width: 1,
+                color: active ? MENU_COLORS.jadeBright : MENU_COLORS.bronzeDark,
+                width: active ? 2 : 1,
             });
     }
 
     private createToggleButton(): Container {
-        const button = new Container();
-        const background = new Graphics()
-            .roundRect(0, 0, 100, 32, 4)
-            .fill({ color: "#3c3c4d" })
-            .stroke({ color: "#77778c", width: 1 });
+        const button = createThemedMenuActionButton(
+            "",
+            100,
+            32,
+            () => this.toggle(),
+            MENU_COLORS.text,
+            MENU_FONT.tab,
+        );
 
         button.x = GAME_WIDTH - 120;
         button.y = GAME_HEIGHT - 42;
-        button.eventMode = "static";
-        button.cursor = "pointer";
 
         this.toggleButtonText.anchor.set(0.5);
         this.toggleButtonText.x = 50;
         this.toggleButtonText.y = 16;
 
-        button.addChild(background);
         button.addChild(this.toggleButtonText);
-        button.on("pointertap", () => {
-            this.toggle();
-        });
 
         return button;
     }

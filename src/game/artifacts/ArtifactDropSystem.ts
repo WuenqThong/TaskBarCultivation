@@ -1,8 +1,6 @@
 import type { ArtifactDefinition } from "./Artifact";
 import {
-    ARTIFACT_FRAGMENT_DROP_CHANCE,
-    ARTIFACT_FRAGMENT_DROP_MAX,
-    ARTIFACT_FRAGMENT_DROP_MIN,
+    getArtifactFragmentDropBand,
 } from "./artifactConfig";
 
 export interface ArtifactFragmentDrop {
@@ -22,8 +20,14 @@ export class ArtifactDropSystem {
         this.random = random;
     }
 
-    public rollDrop(chapter: number): ArtifactFragmentDrop | null {
-        if (this.random() >= ARTIFACT_FRAGMENT_DROP_CHANCE) {
+    public rollDrop(
+        chapter: number,
+        stage: number,
+        isBoss: boolean,
+    ): ArtifactFragmentDrop | null {
+        const band = getArtifactFragmentDropBand(chapter, stage, isBoss);
+
+        if (this.random() >= band.chance) {
             return null;
         }
 
@@ -36,12 +40,9 @@ export class ArtifactDropSystem {
         const artifactIndex = Math.floor(
             this.random() * eligibleArtifacts.length,
         );
-        const amountRange =
-            ARTIFACT_FRAGMENT_DROP_MAX -
-            ARTIFACT_FRAGMENT_DROP_MIN +
-            1;
+        const amountRange = band.maxAmount - band.minAmount + 1;
         const amount =
-            ARTIFACT_FRAGMENT_DROP_MIN +
+            band.minAmount +
             Math.floor(this.random() * amountRange);
 
         return {
@@ -53,8 +54,20 @@ export class ArtifactDropSystem {
     private getEligibleArtifacts(
         chapter: number,
     ): ReadonlyArray<ArtifactDefinition> {
-        void chapter;
+        const unlocked = this.definitions.filter(
+            (definition) => definition.unlockChapter <= chapter,
+        );
 
-        return this.definitions;
+        if (unlocked.length === 0) {
+            return [];
+        }
+
+        const newestChapter = Math.max(
+            ...unlocked.map((definition) => definition.unlockChapter),
+        );
+
+        return unlocked.filter(
+            (definition) => definition.unlockChapter === newestChapter,
+        );
     }
 }

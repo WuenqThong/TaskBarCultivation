@@ -7,7 +7,7 @@ import type { CatalystDropSystem } from "./CatalystDropSystem";
 import type { LootContext, LootTable } from "./LootTable";
 import {
     BOSS_MATERIAL_MULTIPLIER,
-    DEBUG_DROP_MULTIPLIER,
+    getChapterOneRewardBand,
     MATERIAL_DROP_MULTIPLIER,
     SPIRIT_STONE_DROP,
 } from "./lootConfig";
@@ -51,11 +51,19 @@ export class LootSystem {
         enemyDefinition: EnemyDefinition,
         context: LootContext,
     ): LootResult {
-        const artifactDrop = this.artifactDropSystem.rollDrop(context.chapter);
-        const catalystDrop = this.catalystDropSystem.rollDrop(
+        const artifactDrop = this.artifactDropSystem.rollDrop(
             context.chapter,
+            context.stage,
             context.isBoss,
         );
+        const catalystDrop = this.catalystDropSystem.rollDrop(
+            context.chapter,
+            context.stage,
+            context.isBoss,
+        );
+        const rewardBand = context.chapter === 1
+            ? getChapterOneRewardBand(context.stage)
+            : null;
 
         return {
             materials: this.rollMaterials(enemyDefinition, context),
@@ -63,7 +71,7 @@ export class LootSystem {
             catalysts: catalystDrop ? [catalystDrop] : [],
             spiritStone: context.isBoss
                 ? SPIRIT_STONE_DROP.boss
-                : SPIRIT_STONE_DROP.normal,
+                : rewardBand?.spiritStonePerEnemy ?? 5,
         };
     }
 
@@ -79,12 +87,15 @@ export class LootSystem {
 
         const quantityMultiplier = MATERIAL_DROP_MULTIPLIER *
             (context.isBoss ? BOSS_MATERIAL_MULTIPLIER : 1);
+        const chanceMultiplier = context.chapter === 1
+            ? getChapterOneRewardBand(context.stage).materialChanceMultiplier
+            : 1;
         const drops: ItemDrop[] = [];
 
         for (const entry of table.entries) {
             const effectiveChance = Math.min(
                 1,
-                Math.max(0, entry.chance * DEBUG_DROP_MULTIPLIER),
+                Math.max(0, entry.chance * chanceMultiplier),
             );
 
             if (this.random() >= effectiveChance) {

@@ -1,11 +1,7 @@
-import { Container, Graphics, Text } from "pixi.js";
+import { Assets, Container, Sprite, Text, Texture } from "pixi.js";
 import type { CultivationSystem } from "../cultivation/CultivationSystem";
-import {
-    CULTIVATION_REALM_LABELS,
-} from "../cultivation/CultivationRealm";
-import {
-    CULTIVATION_STAGE_LABELS,
-} from "../cultivation/CultivationStage";
+import { CULTIVATION_REALM_LABELS } from "../cultivation/CultivationRealm";
+import { CULTIVATION_STAGE_LABELS } from "../cultivation/CultivationStage";
 import type { Player } from "../entities/Player";
 import type { EquipmentManager } from "../equipment/EquipmentManager";
 import { EQUIPMENT_SLOT_LABELS } from "../equipment/EquipmentSlot";
@@ -14,6 +10,8 @@ import type { TechniqueManager } from "../techniques/TechniqueManager";
 import { StatModifierType } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
 import type { StageSystem } from "../systems/StageSystem";
+import { ALL_MENU_TEXTURE_PATHS, MENU_ASSETS } from "./menu/MenuAssets";
+import { MENU_COLORS } from "./menu/MenuTheme";
 
 type SourceKind = "equipment" | "technique" | "artifact";
 
@@ -36,6 +34,16 @@ const SOURCE_LABELS: Readonly<Record<SourceKind, string>> = {
     artifact: "Pháp bảo",
 };
 
+const CARD_WIDTH = 158;
+const CARD_HEIGHT = 218;
+const CARD_GAP = 16;
+const CARD_Y = 24;
+
+interface CardView {
+    root: Container;
+    value: Text;
+}
+
 export class CharacterProgressionPanel {
     private readonly container = new Container();
     private readonly player: Player;
@@ -45,10 +53,16 @@ export class CharacterProgressionPanel {
     private readonly techniqueManager: TechniqueManager;
     private readonly artifactManager: ArtifactManager;
     private readonly getSpiritStone: () => number;
+    private readonly cards: CardView[] = [];
 
-    private readonly primaryText: Text;
-    private readonly secondaryText: Text;
-    private readonly buildText: Text;
+    public static async loadAssets(): Promise<void> {
+        const textures = await Promise.all(
+            ALL_MENU_TEXTURE_PATHS.map((path) => Assets.load<Texture>(path)),
+        );
+        textures.forEach((texture) => {
+            texture.source.scaleMode = "nearest";
+        });
+    }
 
     public constructor(options: {
         player: Player;
@@ -67,27 +81,31 @@ export class CharacterProgressionPanel {
         this.artifactManager = options.artifactManager;
         this.getSpiritStone = options.getSpiritStone;
 
-        const title = this.createText("NHÂN VẬT", 0, 0, 24, "#ffffff");
-        const statCard = this.createCard(0, 34, 380, 138);
-        const utilityCard = this.createCard(392, 34, 350, 138);
-        const buildCard = this.createCard(754, 34, 486, 138);
-
-        this.primaryText = this.createText("", 14, 45, 14, "#ffffff");
-        this.secondaryText = this.createText("", 406, 45, 14, "#ffffff");
-        this.buildText = this.createText("", 768, 45, 11, "#ffffff");
-        this.buildText.style.wordWrap = true;
-        this.buildText.style.wordWrapWidth = 458;
-        this.buildText.style.lineHeight = 15;
-
-        this.container.addChild(
-            title,
-            statCard,
-            utilityCard,
-            buildCard,
-            this.primaryText,
-            this.secondaryText,
-            this.buildText,
+        const title = this.createText(
+            "NHÂN VẬT · TỔNG QUAN BUILD",
+            0,
+            0,
+            17,
+            MENU_COLORS.bronzeBright,
         );
+        this.container.addChild(title);
+
+        const cardSpecs = [
+            [MENU_ASSETS.cards.neutral, "CẢNH GIỚI"],
+            [MENU_ASSETS.cards.health, "SINH MỆNH"],
+            [MENU_ASSETS.cards.attack, "CÔNG KÍCH"],
+            [MENU_ASSETS.cards.defense, "PHÒNG THỦ"],
+            [MENU_ASSETS.cards.speed, "NHỊP CHIẾN"],
+            [MENU_ASSETS.cards.special, "BUILD"],
+            [MENU_ASSETS.cards.cultivation, "TU LUYỆN"],
+        ] as const;
+
+        cardSpecs.forEach(([asset, label], index) => {
+            const card = this.createCard(asset, label, index);
+            this.cards.push(card);
+            this.container.addChild(card.root);
+        });
+
         this.refresh();
     }
 
@@ -96,59 +114,88 @@ export class CharacterProgressionPanel {
     }
 
     public refresh(): void {
-        this.primaryText.text = [
-            `HP  ${this.formatNumber(this.player.getHp())} / ${this.formatNumber(this.player.getMaxHp())}`,
-            `MP  ${this.formatNumber(this.player.getMp())} / ${this.formatNumber(this.player.getMaxMp())}`,
-            `Công  ${this.formatNumber(this.player.getAttack())}`,
-            `Thủ  ${this.formatNumber(this.player.getDefense())}`,
-            `Bạo kích  ${this.formatPercent(this.player.getCritRate())}`,
-        ].join("\n");
-
-        this.secondaryText.text = [
-            `ST bạo kích  ${this.formatPercent(this.player.getCritDamage())}`,
-            `Hồi HP  ${this.formatNumber(this.player.getHpRegen())}/s`,
-            `Hồi MP  ${this.formatNumber(this.player.getMpRegen())}/s`,
-            `Tốc tu luyện  ${this.formatPercent(this.player.getCultivationSpeed())}`,
-            `Hồi kỹ năng  ${this.formatPercent(this.player.getSkillCooldownRecovery())}`,
-        ].join("\n");
-
         const realm = CULTIVATION_REALM_LABELS[this.cultivationSystem.getRealm()];
         const stage = CULTIVATION_STAGE_LABELS[this.cultivationSystem.getStage()];
         const equipped = this.equipmentManager.getAllEquippedItems();
         const equipmentNames = equipped.length > 0
             ? equipped
                 .map((item) => `${EQUIPMENT_SLOT_LABELS[item.definition.slot]}: ${item.definition.name}`)
-                .join(" · ")
+                .join("\n")
             : "Chưa trang bị";
         const learnedTechniques = this.techniqueManager.getAllTechniques()
             .filter((entry) => entry.state.learned)
             .map((entry) => `${entry.definition.name} Lv.${entry.state.level}`);
         const artifact = this.artifactManager.getEquippedArtifact();
 
-        this.buildText.text = [
-            `${realm} · ${stage} · Tầng ${this.cultivationSystem.getLayer()}    Chương ${this.stageSystem.getChapter()} - Ải ${this.stageSystem.getStage()}`,
-            `Linh Thạch: ${this.getSpiritStone()}`,
-            `Trang bị: ${equipmentNames}`,
+        this.cards[0].value.text = [
+            realm,
+            `${stage} · Tầng ${this.cultivationSystem.getLayer()}`,
+            `Chương ${this.stageSystem.getChapter()} · Ải ${this.stageSystem.getStage()}`,
+        ].join("\n");
+        this.cards[1].value.text = [
+            `HP ${this.formatNumber(this.player.getHp())}/${this.formatNumber(this.player.getMaxHp())}`,
+            `MP ${this.formatNumber(this.player.getMp())}/${this.formatNumber(this.player.getMaxMp())}`,
+            `Hồi HP ${this.formatNumber(this.player.getHpRegen())}/s`,
+            `Hồi MP ${this.formatNumber(this.player.getMpRegen())}/s`,
+        ].join("\n");
+        this.cards[2].value.text = [
+            `ATK ${this.formatNumber(this.player.getAttack())}`,
+            `Crit DMG ${this.formatPercent(this.player.getCritDamage())}`,
+            this.getSourceSummary("equipment", StatType.ATTACK),
+        ].filter(Boolean).join("\n");
+        this.cards[3].value.text = [
+            `DEF ${this.formatNumber(this.player.getDefense())}`,
+            this.getSourceSummary("equipment", StatType.DEFENSE),
+        ].filter(Boolean).join("\n");
+        this.cards[4].value.text = [
+            `Crit ${this.formatPercent(this.player.getCritRate())}`,
+            `Hồi CD ${this.formatPercent(this.player.getSkillCooldownRecovery())}`,
+            this.getSourceSummary("technique"),
+        ].filter(Boolean).join("\n");
+        this.cards[5].value.text = [
+            equipmentNames,
             `Công pháp: ${learnedTechniques.length > 0 ? learnedTechniques.join(", ") : "Chưa học"}`,
             `Pháp bảo: ${artifact?.name ?? "Chưa trang bị"}`,
-            this.getSourceSummary("equipment"),
-            this.getSourceSummary("technique"),
             this.getSourceSummary("artifact"),
-        ].join("\n");
+        ].filter(Boolean).join("\n");
+        this.cards[6].value.text = [
+            `Tốc tu luyện ${this.formatPercent(this.player.getCultivationSpeed())}`,
+            `Linh Thạch ${this.formatNumber(this.getSpiritStone())}`,
+            this.getSourceSummary("technique", StatType.CULTIVATION_SPEED),
+        ].filter(Boolean).join("\n");
     }
 
-    private getSourceSummary(sourceKind: SourceKind): string {
+    private createCard(asset: string, label: string, index: number): CardView {
+        const root = new Container();
+        root.position.set(index * (CARD_WIDTH + CARD_GAP), CARD_Y);
+
+        const texture = Assets.get<Texture>(asset);
+        const frame = new Sprite(texture ?? Texture.EMPTY);
+        frame.width = CARD_WIDTH;
+        frame.height = CARD_HEIGHT;
+        frame.roundPixels = true;
+
+        const title = this.createText(label, CARD_WIDTH / 2, 44, 11, MENU_COLORS.bronzeBright);
+        title.anchor.set(0.5, 0);
+        const value = this.createText("", 17, 74, 10, MENU_COLORS.text);
+        value.style.wordWrap = true;
+        value.style.wordWrapWidth = CARD_WIDTH - 34;
+        value.style.lineHeight = 15;
+
+        root.addChild(frame, title, value);
+        return { root, value };
+    }
+
+    private getSourceSummary(sourceKind: SourceKind, onlyStat?: StatType): string {
         const prefix = `${sourceKind}:`;
-        const statSystem = this.player.getStatSystem();
         const parts: string[] = [];
 
         for (const [stat, label, format] of STAT_ROWS) {
-            const modifiers = statSystem
+            if (onlyStat !== undefined && stat !== onlyStat) continue;
+            const modifiers = this.player.getStatSystem()
                 .getModifiersForStat(stat)
                 .filter((modifier) => modifier.source?.startsWith(prefix));
-            if (modifiers.length === 0) {
-                continue;
-            }
+            if (modifiers.length === 0) continue;
 
             const flat = modifiers
                 .filter((modifier) => modifier.type === StatModifierType.FLAT)
@@ -159,27 +206,19 @@ export class CharacterProgressionPanel {
             const values: string[] = [];
 
             if (Math.abs(flat) > 0.0001) {
-                values.push(format === "percent"
-                    ? this.formatSignedPercent(flat)
-                    : this.formatSignedNumber(flat));
+                values.push(
+                    format === "percent"
+                        ? this.formatSignedPercent(flat)
+                        : this.formatSignedNumber(flat),
+                );
             }
-            if (Math.abs(percent) > 0.0001) {
-                values.push(this.formatSignedPercent(percent));
-            }
-            if (values.length > 0) {
-                parts.push(`${label} ${values.join(" + ")}`);
-            }
+            if (Math.abs(percent) > 0.0001) values.push(this.formatSignedPercent(percent));
+            if (values.length > 0) parts.push(`${label} ${values.join(" + ")}`);
         }
 
-        return `${SOURCE_LABELS[sourceKind]}: ${parts.length > 0 ? parts.join(" · ") : "không có cộng chỉ số"}`;
-    }
-
-    private createCard(x: number, y: number, width: number, height: number): Graphics {
-        const card = new Graphics()
-            .roundRect(x, y, width, height, 5)
-            .fill({ color: "#171720", alpha: 0.86 })
-            .stroke({ color: "#555566", width: 1 });
-        return card;
+        return parts.length > 0
+            ? `${SOURCE_LABELS[sourceKind]}: ${parts.join(" · ")}`
+            : "";
     }
 
     private createText(
@@ -187,7 +226,7 @@ export class CharacterProgressionPanel {
         x: number,
         y: number,
         fontSize: number,
-        fill: string,
+        fill: number,
     ): Text {
         const text = new Text({
             text: value,
@@ -195,10 +234,10 @@ export class CharacterProgressionPanel {
                 fill,
                 fontSize,
                 fontWeight: "bold",
-                lineHeight: fontSize + 7,
+                lineHeight: fontSize + 5,
             },
         });
-        text.position.set(x, y);
+        text.position.set(Math.round(x), Math.round(y));
         return text;
     }
 

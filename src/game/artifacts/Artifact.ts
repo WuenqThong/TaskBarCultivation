@@ -6,5 +6,6 @@ export interface ArtifactDefinition {
     name: string;
     description: string;
     rarity: ArtifactRarity;
+    unlockChapter: number;
     baseModifiers: StatModifier[];
 }
