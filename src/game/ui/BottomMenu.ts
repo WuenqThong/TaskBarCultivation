@@ -65,7 +65,6 @@ import type { StatModifier } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
 import { StageSystem } from "../systems/StageSystem";
 import { TechniqueManager } from "../techniques/TechniqueManager";
-import { CharacterProgressionPanel } from "./CharacterProgressionPanel";
 import { MenuTab } from "./MenuTab";
 import {
     createMenuActionButton as createThemedMenuActionButton,
@@ -82,12 +81,15 @@ const GAME_WIDTH = MENU_LAYOUT.gameWidth;
 const GAME_HEIGHT = MENU_LAYOUT.gameplayHeight;
 const MENU_HEIGHT = MENU_LAYOUT.menuHeight;
 const OPEN_HEIGHT = MENU_LAYOUT.openHeight;
-const TAB_BUTTON_WIDTH = 116;
+const TAB_BUTTON_WIDTH = 146;
 const TAB_BUTTON_HEIGHT = MENU_LAYOUT.tabHeight;
 const TAB_BUTTON_GAP = 4;
 const CHARACTER_REFRESH_INTERVAL = 250;
 const INVENTORY_PAGE_SIZE = 8;
 const EQUIPMENT_PAGE_SIZE = 6;
+const UNIFIED_LOADOUT_PAGE_SIZE = 20;
+const UNIFIED_LOADOUT_WIDTH = 800;
+const UNIFIED_LOADOUT_HEIGHT = 600;
 const REFINING_RARITY_ORDER: ReadonlyArray<EquipmentRarity> = [
     EquipmentRarity.WHITE,
     EquipmentRarity.GREEN,
@@ -98,11 +100,9 @@ const REFINING_RARITY_ORDER: ReadonlyArray<EquipmentRarity> = [
 ];
 
 const TAB_LABELS: ReadonlyArray<readonly [MenuTab, string]> = [
-    [MenuTab.CHARACTER, "Nhân Vật"],
-    [MenuTab.EQUIPMENT, "Trang Bị"],
+    [MenuTab.CHARACTER, "Nhân Vật & Hành Trang"],
     [MenuTab.REFINING, "Luyện Khí"],
     [MenuTab.ALCHEMY, "Luyện Đan"],
-    [MenuTab.INVENTORY, "Túi Đồ"],
     [MenuTab.SKILLS, "Kỹ Năng"],
     [MenuTab.CULTIVATION, "Tu Luyện"],
     [MenuTab.TECHNIQUES, "Công Pháp"],
@@ -191,6 +191,10 @@ export class BottomMenu {
     private onPersistentStateChanged: () => void;
     private container: Container;
     private panel: Container;
+    private menuChromeContainer: Container;
+    private tabNavigationContainer: Container;
+    private contentHostContainer: Container;
+    private overlayContainer: Container;
     private toggleButton: Container;
     private toggleButtonText: Text;
     private tabContainer: Container;
@@ -217,7 +221,6 @@ export class BottomMenu {
     private lastEquipmentCraftResult: EquipmentCraftResult | null;
     private selectedAlchemyCatalysts: Map<string, string | undefined>;
     private lastPillCraftResult: PillCraftResult | null;
-    private characterProgressionPanel: CharacterProgressionPanel | null;
     private cultivationPanel: CultivationPanel | null;
     private skillsPanel: SkillsPanel | null;
 
@@ -266,7 +269,17 @@ export class BottomMenu {
         this.saveManager = saveManager;
         this.onPersistentStateChanged = onPersistentStateChanged;
         this.container = new Container();
+        this.container.label = "bottom-menu-root";
+        this.menuChromeContainer = new Container();
+        this.menuChromeContainer.label = "bottom-menu-chrome";
+        this.tabNavigationContainer = new Container();
+        this.tabNavigationContainer.label = "bottom-menu-navigation";
+        this.contentHostContainer = new Container();
+        this.contentHostContainer.label = "bottom-menu-content-host";
+        this.overlayContainer = new Container();
+        this.overlayContainer.label = "bottom-menu-overlays";
         this.tabContainer = new Container();
+        this.tabContainer.label = "menu-tab-character";
         this.tabButtonBackgrounds = new Map<MenuTab, Graphics>();
         this.activeTab = MenuTab.CHARACTER;
         this.panel = this.createPanel();
@@ -300,7 +313,6 @@ export class BottomMenu {
         this.lastEquipmentCraftResult = null;
         this.selectedAlchemyCatalysts = new Map();
         this.lastPillCraftResult = null;
-        this.characterProgressionPanel = null;
         this.cultivationPanel = null;
         this.skillsPanel = null;
 
@@ -330,7 +342,7 @@ export class BottomMenu {
 
         this.refreshTimer = 0;
         if (this.activeTab === MenuTab.CHARACTER) {
-            this.characterProgressionPanel?.refresh();
+            this.renderUnifiedLoadoutTab();
         }
 
         if (this.activeTab === MenuTab.INVENTORY) {
@@ -391,9 +403,10 @@ export class BottomMenu {
     }
 
     public openTab(tab: MenuTab): void {
-        this.activeTab = tab;
+        const normalizedTab = this.normalizeLoadoutTab(tab);
+        this.activeTab = normalizedTab;
         this.open();
-        this.switchTab(tab);
+        this.switchTab(normalizedTab);
     }
 
     public setLegacyToggleVisible(visible: boolean): void {
@@ -412,29 +425,32 @@ export class BottomMenu {
                 fontWeight: "bold",
             },
         });
-        const tabNavigation = new Container();
+        panel.label = "bottom-menu-panel";
 
         panel.y = GAME_HEIGHT;
         panel.visible = false;
 
         title.x = 20;
         title.y = 14;
-        tabNavigation.x = 20;
-        tabNavigation.y = 45;
-        this.tabContainer.x = 20;
-        this.tabContainer.y = MENU_LAYOUT.contentTop;
+        this.tabNavigationContainer.x = 20;
+        this.tabNavigationContainer.y = 45;
+        this.contentHostContainer.x = 20;
+        this.contentHostContainer.y = MENU_LAYOUT.contentTop;
 
         TAB_LABELS.forEach(([tab, label], index) => {
             const button = this.createTabButton(label, tab);
 
             button.x = index * (TAB_BUTTON_WIDTH + TAB_BUTTON_GAP);
-            tabNavigation.addChild(button);
+            this.tabNavigationContainer.addChild(button);
         });
 
-        panel.addChild(background);
-        panel.addChild(title);
-        panel.addChild(tabNavigation);
-        panel.addChild(this.tabContainer);
+        this.menuChromeContainer.addChild(background, title, this.tabNavigationContainer);
+        this.contentHostContainer.addChild(this.tabContainer);
+        panel.addChild(
+            this.menuChromeContainer,
+            this.contentHostContainer,
+            this.overlayContainer,
+        );
 
         return panel;
     }
@@ -474,7 +490,9 @@ export class BottomMenu {
     }
 
     private switchTab(tab: MenuTab): void {
+        tab = this.normalizeLoadoutTab(tab);
         if (tab === this.activeTab) {
+            if (tab === MenuTab.CHARACTER) this.renderUnifiedLoadoutTab();
             return;
         }
 
@@ -485,24 +503,16 @@ export class BottomMenu {
     }
 
     private renderActiveTab(): void {
-        this.tabContainer.removeChildren();
+        this.contentHostContainer.removeChildren();
+        this.tabContainer = new Container();
+        this.tabContainer.label = `menu-tab-${this.activeTab}`;
+        this.contentHostContainer.addChild(this.tabContainer);
 
-        this.characterProgressionPanel = null;
         this.cultivationPanel = null;
         this.skillsPanel = null;
 
         if (this.activeTab === MenuTab.CHARACTER) {
-            this.renderCharacterTab();
-            return;
-        }
-
-        if (this.activeTab === MenuTab.INVENTORY) {
-            this.renderInventoryTab();
-            return;
-        }
-
-        if (this.activeTab === MenuTab.EQUIPMENT) {
-            this.renderEquipmentTab();
+            this.renderUnifiedLoadoutTab();
             return;
         }
 
@@ -562,17 +572,227 @@ export class BottomMenu {
         this.tabContainer.addChild(panel.getView());
     }
 
-    private renderCharacterTab(): void {
-        this.characterProgressionPanel = new CharacterProgressionPanel({
-            player: this.player,
-            cultivationSystem: this.cultivationSystem,
-            stageSystem: this.stageSystem,
-            equipmentManager: this.equipmentManager,
-            techniqueManager: this.techniqueManager,
-            artifactManager: this.artifactManager,
-            getSpiritStone: this.getSpiritStone,
+    private normalizeLoadoutTab(tab: MenuTab): MenuTab {
+        return tab === MenuTab.EQUIPMENT || tab === MenuTab.INVENTORY
+            ? MenuTab.CHARACTER
+            : tab;
+    }
+
+    private renderUnifiedLoadoutTab(): void {
+        this.tabContainer.removeChildren();
+
+        const backgroundX = Math.round((GAME_WIDTH - 40 - UNIFIED_LOADOUT_WIDTH) / 2);
+        const backgroundTexture = Assets.get<Texture>(MENU_ASSETS.loadout.main) ?? Texture.EMPTY;
+        backgroundTexture.source.scaleMode = "nearest";
+        const background = new Sprite(backgroundTexture);
+        background.position.set(backgroundX, 0);
+        background.width = UNIFIED_LOADOUT_WIDTH;
+        background.height = UNIFIED_LOADOUT_HEIGHT;
+        background.roundPixels = true;
+        this.tabContainer.addChild(background);
+
+        const sx = UNIFIED_LOADOUT_WIDTH / 1448;
+        const sy = UNIFIED_LOADOUT_HEIGHT / 1086;
+        const px = (originalX: number) => Math.round(backgroundX + originalX * sx);
+        const py = (originalY: number) => Math.round(originalY * sy);
+
+        const portraitTexture = Assets.get<Texture>(UI_ASSETS.playerPortrait) ?? Texture.EMPTY;
+        const portrait = new Sprite(portraitTexture);
+        portrait.anchor.set(0.5);
+        portrait.position.set(px(382), py(470));
+        portrait.scale.set(4.2);
+        portrait.roundPixels = true;
+        this.tabContainer.addChild(portrait);
+
+        const realm = CULTIVATION_REALM_LABELS[this.cultivationSystem.getRealm()];
+        const header = this.createContentText(
+            `NHÂN VẬT · ${realm} · Tầng ${this.cultivationSystem.getLayer()} · Chương ${this.stageSystem.getChapter()} / Ải ${this.stageSystem.getStage()}`,
+            py(196),
+            12,
+        );
+        header.x = px(755);
+        header.style.fill = MENU_COLORS.bronzeBright;
+        this.tabContainer.addChild(header);
+
+        const status = this.createContentText(
+            this.inventoryStatusMessage || this.equipmentStatusMessage || "Bấm trang bị trong túi để mặc · bấm ô đang mặc để tháo",
+            py(221),
+            9,
+        );
+        status.x = px(755);
+        status.style.fill = this.inventoryStatusMessage || this.equipmentStatusMessage
+            ? "#fbbf24"
+            : MENU_COLORS.textMuted;
+        status.style.wordWrap = true;
+        status.style.wordWrapWidth = Math.round(520 * sx);
+        this.tabContainer.addChild(status);
+
+        const equippedSlotPositions = [
+            { slot: EquipmentSlot.WEAPON, x: 113, y: 214 },
+            { slot: EquipmentSlot.ARMOR, x: 113, y: 335 },
+            { slot: EquipmentSlot.BRACELET, x: 113, y: 455 },
+        ] as const;
+
+        for (const slotPosition of equippedSlotPositions) {
+            const equipment = this.equipmentManager.getEquippedItem(slotPosition.slot);
+            const label = this.createContentText(
+                equipment?.definition.name ?? EQUIPMENT_SLOT_LABELS[slotPosition.slot],
+                py(slotPosition.y + 70),
+                8,
+            );
+            label.x = px(slotPosition.x - 4);
+            label.style.fill = equipment
+                ? EQUIPMENT_RARITY_COLORS[equipment.rarity]
+                : MENU_COLORS.textMuted;
+            label.style.wordWrap = true;
+            label.style.wordWrapWidth = Math.round(105 * sx);
+            this.tabContainer.addChild(label);
+
+            if (equipment) {
+                const hit = new Graphics()
+                    .rect(px(slotPosition.x), py(slotPosition.y), Math.round(100 * sx), Math.round(100 * sy))
+                    .fill({ color: 0xffffff, alpha: 0.001 });
+                hit.eventMode = "static";
+                hit.cursor = "pointer";
+                hit.on("pointertap", () => {
+                    if (this.equipmentManager.unequip(slotPosition.slot)) {
+                        this.inventoryStatusMessage = `Đã tháo ${equipment.definition.name}`;
+                        this.saveManager.requestSave();
+                        this.renderUnifiedLoadoutTab();
+                    }
+                });
+                this.tabContainer.addChild(hit);
+            }
+        }
+
+        const inventoryItems = this.inventory.getItems();
+        const pillStacks = this.inventory.getPillStacks();
+        const equipmentInstances = this.inventory.getEquipmentInstances();
+        const entries: Array<{
+            name: string;
+            detail: string;
+            color: string | number;
+            action?: () => void;
+        }> = [];
+
+        for (const inventoryItem of inventoryItems) {
+            entries.push({
+                name: `${inventoryItem.item.name} x${inventoryItem.quantity}`,
+                detail: isMaterialDefinition(inventoryItem.item)
+                    ? `Tier ${inventoryItem.item.tier}`
+                    : ITEM_TYPE_LABELS[inventoryItem.item.type],
+                color: MENU_COLORS.text,
+            });
+        }
+
+        for (const stack of pillStacks) {
+            const definition = this.alchemyManager.getPillDefinition(stack.definitionId);
+            if (!definition) continue;
+            entries.push({
+                name: `${definition.name} x${stack.quantity}`,
+                detail: "Bấm để dùng",
+                color: EQUIPMENT_RARITY_COLORS[stack.rarity],
+                action: () => {
+                    this.alchemyManager.usePill(stack.definitionId, stack.rarity);
+                    this.inventoryStatusMessage = `Đã dùng ${definition.name}`;
+                    this.saveManager.requestSave();
+                    this.renderUnifiedLoadoutTab();
+                },
+            });
+        }
+
+        for (const equipment of equipmentInstances) {
+            const equipped = this.equipmentManager.isEquipped(equipment.instanceId);
+            entries.push({
+                name: equipment.definition.name,
+                detail: equipped ? "Đang mặc" : `${EQUIPMENT_RARITY_LABELS[equipment.rarity]} · Bấm để mặc`,
+                color: EQUIPMENT_RARITY_COLORS[equipment.rarity],
+                action: equipped
+                    ? undefined
+                    : () => {
+                        if (this.equipmentManager.equip(equipment)) {
+                            this.inventoryStatusMessage = `Đã trang bị ${equipment.definition.name}`;
+                            this.saveManager.requestSave();
+                        } else {
+                            this.inventoryStatusMessage = `Chưa đủ cảnh giới để dùng ${equipment.definition.name}`;
+                        }
+                        this.renderUnifiedLoadoutTab();
+                    },
+            });
+        }
+
+        const pageCount = Math.max(1, Math.ceil(entries.length / UNIFIED_LOADOUT_PAGE_SIZE));
+        this.inventoryPage = Math.min(this.inventoryPage, pageCount - 1);
+        const visibleEntries = entries.slice(
+            this.inventoryPage * UNIFIED_LOADOUT_PAGE_SIZE,
+            (this.inventoryPage + 1) * UNIFIED_LOADOUT_PAGE_SIZE,
+        );
+
+        visibleEntries.forEach((entry, index) => {
+            const col = index % 5;
+            const row = Math.floor(index / 5);
+            const cellX = 750 + col * 110;
+            const cellY = 270 + row * 108;
+            const name = this.createContentText(entry.name, py(cellY + 10), 7);
+            name.x = px(cellX + 8);
+            name.style.fill = entry.color;
+            name.style.wordWrap = true;
+            name.style.wordWrapWidth = Math.round(92 * sx);
+            const detail = this.createContentText(entry.detail, py(cellY + 58), 6);
+            detail.x = px(cellX + 8);
+            detail.style.fill = MENU_COLORS.textMuted;
+            detail.style.wordWrap = true;
+            detail.style.wordWrapWidth = Math.round(92 * sx);
+            this.tabContainer.addChild(name, detail);
+
+            if (entry.action) {
+                const hit = new Graphics()
+                    .rect(px(cellX), py(cellY), Math.round(100 * sx), Math.round(92 * sy))
+                    .fill({ color: 0xffffff, alpha: 0.001 });
+                hit.eventMode = "static";
+                hit.cursor = "pointer";
+                hit.on("pointertap", entry.action);
+                this.tabContainer.addChild(hit);
+            }
         });
-        this.tabContainer.addChild(this.characterProgressionPanel.getView());
+
+        if (pageCount > 1) {
+            const previous = this.createMenuActionButton("‹", 28, 20, () => {
+                this.inventoryPage = Math.max(0, this.inventoryPage - 1);
+                this.renderUnifiedLoadoutTab();
+            }, "#f4dfaa", 10);
+            const page = this.createContentText(`Trang ${this.inventoryPage + 1}/${pageCount}`, py(735), 8);
+            const next = this.createMenuActionButton("›", 28, 20, () => {
+                this.inventoryPage = Math.min(pageCount - 1, this.inventoryPage + 1);
+                this.renderUnifiedLoadoutTab();
+            }, "#f4dfaa", 10);
+            previous.position.set(px(1010), py(730));
+            page.x = px(1065);
+            next.position.set(px(1160), py(730));
+            this.tabContainer.addChild(previous, page, next);
+        }
+
+        const stats = [
+            `HP\n${this.formatNumber(this.player.getHp())}/${this.formatNumber(this.player.getMaxHp())}`,
+            `MP\n${this.formatNumber(this.player.getMp())}/${this.formatNumber(this.player.getMaxMp())}`,
+            `CÔNG\n${this.formatNumber(this.player.getAttack())}`,
+            `THỦ\n${this.formatNumber(this.player.getDefense())}`,
+            `BẠO KÍCH\n${this.formatPercent(this.player.getCritRate())}`,
+            `LINH THẠCH\n${this.formatNumber(this.getSpiritStone())}`,
+        ];
+        stats.forEach((value, index) => {
+            const stat = this.createContentText(value, py(855), 8);
+            stat.x = px(285 + index * 155);
+            stat.style.fill = index < 2 ? MENU_COLORS.jadeBright : MENU_COLORS.bronzeBright;
+            stat.style.align = "center";
+            stat.style.wordWrap = true;
+            stat.style.wordWrapWidth = Math.round(120 * sx);
+            this.tabContainer.addChild(stat);
+        });
+
+        this.renderedInventoryVersion = this.inventory.getVersion();
+        this.renderedEquipmentVersion = this.equipmentManager.getVersion();
+        this.renderedEquipmentInventoryVersion = this.inventory.getVersion();
     }
 
     private renderCultivationTab(): void {
@@ -2611,7 +2831,7 @@ export class BottomMenu {
 
         this.refreshTimer = 0;
         if (this.activeTab === MenuTab.CHARACTER) {
-            this.characterProgressionPanel?.refresh();
+            this.renderUnifiedLoadoutTab();
         } else {
             this.cultivationPanel?.refresh();
         }

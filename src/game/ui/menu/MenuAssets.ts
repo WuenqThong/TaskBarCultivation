@@ -1,4 +1,7 @@
 export const MENU_ASSETS = {
+    loadout: {
+        main: "/assets/ui/loadout/loadout-main.png",
+    },
     cards: {
         neutral: "/assets/ui/menu/cards/card-neutral.png",
         health: "/assets/ui/menu/cards/card-health.png",
@@ -22,6 +25,7 @@ export const MENU_ASSETS = {
 } as const;
 
 export const ALL_MENU_TEXTURE_PATHS = [
+    MENU_ASSETS.loadout.main,
     ...Object.values(MENU_ASSETS.cards),
     MENU_ASSETS.inventory.gridFrame,
     MENU_ASSETS.inventory.rarityFrame,

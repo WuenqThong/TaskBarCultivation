@@ -1,8 +1,8 @@
 export const MENU_LAYOUT = {
     gameWidth: 1280,
     gameplayHeight: 360,
-    menuHeight: 360,
-    openHeight: 720,
+    menuHeight: 720,
+    openHeight: 1080,
     panelPadding: 18,
     tabHeight: 34,
     contentTop: 102,
