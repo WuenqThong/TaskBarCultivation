@@ -45,11 +45,13 @@ export class SettingsPanel implements MenuPanel {
                 this.refresh();
             }, MENU_COLORS.jadeBright],
             ["XÓA SAVE", () => {
+                if (!window.confirm("Xóa bản lưu? Tiến trình đang chơi vẫn được giữ và có thể được tự động lưu lại.")) return;
                 this.saveManager.deleteSave();
                 this.statusMessage = "Đã xóa save; runtime được giữ nguyên";
                 this.refresh();
             }, MENU_COLORS.danger],
             ["RESET GAME", () => {
+                if (!window.confirm("Đặt lại toàn bộ tiến trình, túi đồ và tu luyện? Thao tác này sẽ xóa bản lưu và không thể hoàn tác.")) return;
                 this.saveManager.resetPersistentProgress();
                 this.onPersistentStateChanged();
                 this.statusMessage = "Đã reset permanent progress";
