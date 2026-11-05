@@ -6,17 +6,16 @@ body {
 }
 
 body {
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
+    display: block;
 
     background: #0d0d12;
 
-    overflow: hidden;
+    overflow: auto;
 }
 
 canvas {
     display: block;
+    margin: 0 auto;
 
     image-rendering: pixelated;
 
